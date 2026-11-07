@@ -4,7 +4,7 @@ import Foundation
     static func check(_ value: Bool, _ message: String) { precondition(value, message) }
     @MainActor static func main() throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-profile-" + UUID().uuidString)
+        let root = (ProcessInfo.processInfo.environment["TALKTUCK_TEST_ROOT"].map { URL(fileURLWithPath:$0, isDirectory:true) } ?? fm.temporaryDirectory).appendingPathComponent("talktuck-profile-" + UUID().uuidString)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
         let record = MeetingRecord(title: "后台实时验收", status: .recording)
