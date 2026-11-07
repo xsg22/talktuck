@@ -19,6 +19,16 @@ import AVFoundation
         precondition(recovered==[360] && attempts.count==5)
         precondition(output.paragraphs.count==4 && output.paragraphs.first?.start==0 && output.paragraphs.last?.end==400)
         precondition(attempts.dropFirst().allSatisfy{($0["end"]as! Double)-($0["start"]as! Double)<=120.001})
+        // Also cover the ordinary offline entry with its 3-second initial overlap,
+        // and a failure at the old minimum window of 24 seconds.
+        try FileManager.default.removeItem(at:calls)
+        setenv("TALKTUCK_RECOVERY_LIMIT","12",1); defer { unsetenv("TALKTUCK_RECOVERY_LIMIT") }
+        var shortRecovery:[Int]=[]
+        let short=try TranscriptionEngine(temporaryRoot:root).transcribeBatch(audio:audio,model:root,executable:executable,language:"en",hotwords:[],context:"",windowSeconds:24,initialOverlapSeconds:3,onRecovery:{shortRecovery.append($0)})
+        let shortAttempts=try String(contentsOf:calls).split(separator:"\n").map{try JSONSerialization.jsonObject(with:Data($0.utf8)) as! [String:Any]}
+        precondition(shortRecovery == [24] && shortAttempts.count > 2)
+        precondition(short.paragraphs.first?.start == 0 && short.paragraphs.last?.end == 400)
+        precondition(shortAttempts.dropFirst().allSatisfy { ($0["end"] as! Double)-($0["start"] as! Double) <= 12.001 })
         precondition(!TranscriptionEngine.isRecoverableWindowFailure(CancellationError()))
         print("PASS: no truncated text published, finite failed-batch-only decoder recovery, 120s windows with 3s context cover all 400s")
     }

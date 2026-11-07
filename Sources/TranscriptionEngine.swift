@@ -309,13 +309,13 @@ final class TranscriptionEngine: @unchecked Sendable {
     /// A decoder-limit failure must not publish truncated text. Retry only
     /// this unacknowledged batch, with a finite smaller-window sequence.
     func transcribeBatch(audio:URL,model:URL,executable:URL,language:String,hotwords:[String],context:String,
-                         windowSeconds:Int,onRecovery:(Int)->Void = {_ in}) throws -> TranscriptionOutput {
+                         windowSeconds:Int,initialOverlapSeconds:Int = 0,onRecovery:(Int)->Void = {_ in}) throws -> TranscriptionOutput {
         var seen=Set<Int>();var last:Error=TranscriptionError.message("转录未完成。")
-        for seconds in [windowSeconds,120,60,24] where seconds<=windowSeconds && seen.insert(seconds).inserted {
+        for seconds in [windowSeconds,120,60,24,12,6] where seconds<=windowSeconds && seen.insert(seconds).inserted {
             try checkCancelled()
             do {
                 return try transcribe(audio:audio,model:model,executable:executable,language:language,hotwords:hotwords,context:context,
-                    offlineWindows:true,windowSeconds:seconds,overlapSeconds:seconds==windowSeconds ? 0:3)
+                    offlineWindows:true,windowSeconds:seconds,overlapSeconds: seconds == windowSeconds ? initialOverlapSeconds : min(3, seconds - 1))
             } catch {
                 last=error;try checkCancelled()
                 guard Self.isRecoverableWindowFailure(error) else { throw error }

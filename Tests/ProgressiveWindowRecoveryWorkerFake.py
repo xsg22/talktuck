@@ -10,7 +10,7 @@ while True:
  while remaining:
   value=stream.read(min(65536,remaining));assert value;remaining-=len(value)
  with open(os.environ['TALKTUCK_RECOVERY_CALLS'],'a')as f:f.write(json.dumps(clip)+'\n')
- if clip['end']-clip['start']>120.001:
+ if clip['end']-clip['start']>float(os.environ.get('TALKTUCK_RECOVERY_LIMIT','120'))+.001:
   print('Transcript token limit reached; partial result not saved',file=sys.stderr);sys.exit(1)
  segments.append(dict(text='Audio range %s to %s.'%(clip['start'],clip['end']),start=clip['start'],end=clip['end']))
 output.write_text(json.dumps(dict(segments=segments)))

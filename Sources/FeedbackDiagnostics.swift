@@ -17,7 +17,7 @@ final class FeedbackDiagnostics: @unchecked Sendable {
 
     func record(_ component: String, _ event: String, fields: [String: Any] = [:], at date: Date = Date()) {
         let timestamp = ISO8601DateFormatter().string(from: date)
-        queue.async {
+        queue.sync {
             do {
                 let fm = FileManager.default
                 try fm.createDirectory(at: self.root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -52,26 +52,38 @@ final class FeedbackDiagnostics: @unchecked Sendable {
             if let lastWriteError { throw lastWriteError }
             let marker = root.appendingPathComponent("last-overwrite.txt")
             let overwritten = (try? String(contentsOf: marker, encoding: .utf8)).flatMap(TimeInterval.init).map(Date.init(timeIntervalSince1970:))
-            let metadata: [String: Any] = ["time": ISO8601DateFormatter().string(from: Date()), "component": "diagnostics", "event": "snapshot", "fields": ["windowHours": 24, "retainedFileLimit": archiveCount + 1, "fileSizeLimitBytes": maximumBytes, "possiblyTruncated": overwritten.map { $0 >= cutoff } ?? false]]
-            var result = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]); result.append(10)
+            var body = Data()
+            var damaged = false
+            var started = Set<String>()
             for index in stride(from: archiveCount, through: 0, by: -1) {
                 let file = root.appendingPathComponent(index == 0 ? "events.jsonl" : "events.\(index).jsonl")
                 if FileManager.default.fileExists(atPath: file.path) {
                     let source = try Data(contentsOf: file)
+                    if !source.isEmpty && source.last != 10 { damaged = true }
                     let formatter = ISO8601DateFormatter()
                     for line in source.split(separator: 10, omittingEmptySubsequences: true) {
                         guard let object = try? JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
-                            throw CocoaError(.fileReadCorruptFile)
+                            damaged = true; continue
                         }
                         let timestamp: Date?
                         if let value = object["timestamp"] as? TimeInterval { timestamp = Date(timeIntervalSince1970: value) }
                         else if let value = object["time"] as? String { timestamp = formatter.date(from: value) }
                         else { timestamp = nil }
-                        guard let timestamp else { throw CocoaError(.fileReadCorruptFile) }
-                        if timestamp >= cutoff { result.append(contentsOf: line); result.append(10) }
+                        guard let timestamp else { damaged = true; continue }
+                        if timestamp >= cutoff {
+                            body.append(contentsOf: line); body.append(10)
+                            if object["component"] as? String == "worker-output",
+                               let fields = object["fields"] as? [String: Any], let id = fields["workerID"] as? String {
+                                if object["event"] as? String == "capture-start" { started.insert(id) }
+                                if object["event"] as? String == "capture-end" { started.remove(id) }
+                            }
+                        }
                     }
                 }
             }
+            let metadata: [String: Any] = ["time": ISO8601DateFormatter().string(from: Date()), "component": "diagnostics", "event": "snapshot", "fields": ["windowHours": 24, "retainedFileLimit": archiveCount + 1, "fileSizeLimitBytes": maximumBytes, "possiblyTruncated": (overwritten.map { $0 >= cutoff } ?? false) || damaged || !started.isEmpty, "incompleteWorkerCaptures": started.count, "damagedLogData": damaged]]
+            var result = try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]); result.append(10)
+            result.append(body)
             return result
         }
     }
