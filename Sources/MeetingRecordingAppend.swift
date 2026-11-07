@@ -48,6 +48,10 @@ enum MeetingRecordingAppend {
         let previousDuration = appending ? max(0, record.duration - recordedPendingDuration) : 0
         var offset = previousDuration
         for (index, output) in outputs.enumerated() {
+            for var candidate in output.originalCandidates {
+                candidate.audioFile = files[index]
+                record.originalRecognitionCandidates.append(candidate)
+            }
             if !output.text.isEmpty {
                 let prefix = text.isEmpty ? "" : "\n\n"
                 var rows = output.paragraphs

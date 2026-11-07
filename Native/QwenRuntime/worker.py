@@ -94,10 +94,16 @@ def stream_clips(max_seconds=MAX_ASR_SECONDS):
         if len(data)!=frames*4:raise ValueError('Incomplete clip PCM')
         yield item,data
 
-def recognized_segment(model,audio,*,start,end,language,hotwords=None):
+def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False):
     generated=generate_complete(model,audio,language=language,hotwords=hotwords)
     text=generated.text.strip();segment=dict(text=text,start=start,end=end)
-    if text and len(audio)/16000>MAX_ALIGNMENT_SECONDS:
+    if text and recover_repeats:
+        from repeat_recovery import recover
+        corrected=recover(model,audio,text,start,language,hotwords,generate_complete)
+        if corrected:
+            segment.update(corrected);text=segment['text']
+            print('Qwen3-ASR: repeated output rechecked with two bounded windows; original retained',file=sys.stderr,flush=True)
+    if text and 'alignmentParts' not in segment and len(audio)/16000>MAX_ALIGNMENT_SECONDS:
         from alignment_windows import prepare,AlignmentWindowError
         try:
             parts=prepare(model,audio,text,language=language,hotwords=hotwords)
@@ -116,10 +122,12 @@ def transcribe_stream(model_path,language,output,hints_path):
     hints=json.loads(pathlib.Path(hints_path).read_text());words=hints.get('words',[]);context=hints.get('context','')
     if not isinstance(words,list) or len(words)>1000 or any(not isinstance(w,str) or not 2<=len(w)<=40 or '\n' in w or '\r' in w for w in words):raise ValueError('Invalid hotwords')
     if not isinstance(context,str) or len(context)>2000:raise ValueError('Invalid hotword context')
+    recover_repeats=hints.get('recoverRepeatedOutput',False)
+    if not isinstance(recover_repeats,bool):raise ValueError('Invalid repeat recovery option')
     configure_memory(mx)
     model=load(pathlib.Path(model_path).resolve(strict=True));selected_language=recognition_language(language);result=[]
     for clip,data in stream_clips():
-        segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=select_hotwords(words,context) or None)
+        segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=select_hotwords(words,context) or None,recover_repeats=recover_repeats)
         result.append(segment)
         context=(context+' '+segment['text'])[-2000:];mx.clear_cache()
     output=pathlib.Path(output);temp=output.with_suffix('.partial')
@@ -159,6 +167,47 @@ def align_words_with_context(model,audio,text,language,clip,following=None,follo
                 print('ForcedAligner: context retry unavailable: '+type(error).__name__,file=sys.stderr,flush=True)
     return aligned_words(text,items,clip['start'],duration)
 
+def repair_alignment_seam(model,left,left_audio,left_rows,right,right_audio,right_rows):
+    """Re-align a bounded contiguous seam without changing any recognized text."""
+    import numpy as np
+    from speaker_attribution import aligned_words
+    if not left_rows or not right_rows:return left_rows,right_rows
+    end=float(left['end']);start=float(right['start'])
+    if abs(end-start)>1/16000:return left_rows,right_rows
+    if abs(len(left_audio)-round((end-float(left['start']))*16000))>1:return left_rows,right_rows
+    if abs(len(right_audio)-round((float(right['end'])-start)*16000))>1:return left_rows,right_rows
+    tail=left_rows[-1]
+    if not (tail.get('timingUncertain') and abs(tail['start']-end)<=.001 and abs(tail['end']-end)<=.001):return left_rows,right_rows
+    if alignment_language(left.get('language','auto'),left['text']) != alignment_language(right.get('language','auto'),right['text']):return left_rows,right_rows
+    before=min(12*16000,len(left_audio));after=min(12*16000,len(right_audio))
+    if before<16000 or after<16000:return left_rows,right_rows
+    lo=end-before/16000;hi=end+after/16000
+    first=next((i for i,w in enumerate(left_rows) if w['start']>=lo),len(left_rows))
+    last=0
+    while last<len(right_rows) and right_rows[last]['end']<=hi:last+=1
+    if first==len(left_rows) or last==0:return left_rows,right_rows
+    selected=left_rows[first:]+right_rows[:last]
+    if not any(not w.get('timingUncertain') and w['end']>w['start'] for w in left_rows[first:]):return left_rows,right_rows
+    if not any(not w.get('timingUncertain') and w['end']>w['start'] for w in right_rows[:last]):return left_rows,right_rows
+    expected=''.join(w.get('separator','')+w['text'] for w in selected)
+    prefix=selected[0].get('separator','');text=expected[len(prefix):]
+    if not text or len(text)>10000:return left_rows,right_rows
+    try:
+        samples=np.concatenate((left_audio[-before:],right_audio[:after]))
+        result=model.generate(audio=samples,text=text,language=alignment_language(left.get('language','auto'),text))
+        items=[dict(text=w.text,start=w.start_time,end=w.end_time) for w in result.items]
+        repaired=aligned_words(text,items,lo,len(samples)/16000)
+        if not repaired or any(w.get('timingUncertain') for w in repaired):return left_rows,right_rows
+        repaired[0]['separator']=prefix
+        if ''.join(w.get('separator','')+w['text'] for w in repaired)!=expected:return left_rows,right_rows
+        if first and repaired[0]['start']<left_rows[first-1]['end']-.3:return left_rows,right_rows
+        if last<len(right_rows) and repaired[-1]['end']>right_rows[last]['start']+.3:return left_rows,right_rows
+        print('ForcedAligner: repaired boundary with contiguous audio',file=sys.stderr,flush=True)
+        return left_rows[:first]+repaired,right_rows[last:]
+    except (ValueError,RuntimeError) as error:
+        print('ForcedAligner: boundary retry unavailable: '+type(error).__name__,file=sys.stderr,flush=True)
+        return left_rows,right_rows
+
 def with_following(items):
     iterator=iter(items)
     current=next(iterator,None)
@@ -175,7 +224,7 @@ def align_stream(model_path,turns_path,output):
     from sentence_speakers import attribute_sentences
     voice=json.loads(pathlib.Path(turns_path).read_text())
     model=load(pathlib.Path(model_path).resolve(strict=True));paragraphs=[]
-    hotwords=[]
+    hotwords=[];pending=None
     for index,((clip,data),following) in enumerate(with_following(stream_clips(MAX_ALIGNMENT_SECONDS))):
         text=clip.get('text');language=clip.get('language','auto')
         if not isinstance(text,str) or not text or len(text)>100000:raise ValueError('Invalid alignment text')
@@ -185,7 +234,12 @@ def align_stream(model_path,turns_path,output):
         rows=align_words_with_context(model,audio,text,alignment_language(language,text),clip,next_clip,next_audio)
         hotwords.extend(clip.get('hotwords',[]))
         if rows:rows[0]['separator']=clip.get('separator','' if index==0 else '\n')
-        paragraphs.extend(rows);mx.clear_cache()
+        if pending is not None:
+            prev_clip,prev_audio,prev_rows=pending
+            prev_rows,rows=repair_alignment_seam(model,prev_clip,prev_audio,prev_rows,clip,audio,rows)
+            paragraphs.extend(prev_rows)
+        pending=(clip,audio,rows);mx.clear_cache()
+    if pending is not None:paragraphs.extend(pending[2])
     words=paragraphs
     paragraphs=attribute_sentences(words,voice['turns'],frames=voice.get('frames'),protected_words=hotwords)
     pathlib.Path(output).write_text(json.dumps(dict(paragraphs=paragraphs,alignedWords=words,attributionPolicy='sentence-v1'),ensure_ascii=False))
@@ -199,7 +253,7 @@ def align_speakers(model_path,manifest_path,turns_path,output):
     manifest=pathlib.Path(manifest_path).resolve(strict=True);clips=json.loads(manifest.read_text())
     voice=json.loads(pathlib.Path(turns_path).read_text())
     model=load(pathlib.Path(model_path).resolve(strict=True));paragraphs=[]
-    hotwords=[]
+    hotwords=[];pending=None
     def read_audio(clip):
         path=pathlib.Path(clip['audio']).resolve(strict=True)
         if path.parent!=manifest.parent:raise ValueError('Invalid alignment audio path')
@@ -214,8 +268,13 @@ def align_speakers(model_path,manifest_path,turns_path,output):
         rows=align_words_with_context(model,audio,clip['text'],language,clip,next_clip,next_audio)
         hotwords.extend(clip.get('hotwords',[]))
         if rows:rows[0]['separator']=clip.get('separator','' if index==0 else '\n')
-        paragraphs.extend(rows);mx.clear_cache()
+        if pending is not None:
+            prev_clip,prev_audio,prev_rows=pending
+            prev_rows,rows=repair_alignment_seam(model,prev_clip,prev_audio,prev_rows,clip,audio,rows)
+            paragraphs.extend(prev_rows)
+        pending=(clip,audio,rows);mx.clear_cache()
         print('ForcedAligner: %d/%d'%(index+1,len(clips)),file=sys.stderr,flush=True)
+    if pending is not None:paragraphs.extend(pending[2])
     words=paragraphs
     paragraphs=attribute_sentences(words,voice['turns'],frames=voice.get('frames'),protected_words=hotwords)
     pathlib.Path(output).write_text(json.dumps(dict(paragraphs=paragraphs,alignedWords=words,attributionPolicy='sentence-v1'),ensure_ascii=False))

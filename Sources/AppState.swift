@@ -611,7 +611,7 @@ final class AppState: ObservableObject {
                     guard duration.isFinite, duration >= 0 else { throw TranscriptionError.message("录音时长无效。") }
                     let output = try await withTaskCancellationHandler {
                         try await Task.detached(priority: .userInitiated) {
-                            try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds)
+                            try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true)
                         }.value
                     } onCancel: { engine.cancel() }
                     outputs.append(output); durations.append(duration)
@@ -1530,6 +1530,13 @@ final class AppState: ObservableObject {
     /// Resolve an explicit card target after saving the editor; never export another selection.
     func exportDocument(kind: String, recordingID: UUID) -> (name: String, ext: String, content: String)? {
         guard !locked, saveEdits(), let record = history.first(where: { $0.id == recordingID }) else { return nil }
+        if kind == "原始识别候选" {
+            guard !record.originalRecognitionCandidates.isEmpty else { return nil }
+            let content = record.originalRecognitionCandidates.enumerated().map { index, item in
+                L10n.format("候选 {0}（{1}–{2} 秒）\n首次识别：\n{3}\n\n复核结果：\n{4}", String(index + 1), String(format: "%.2f", item.start), String(format: "%.2f", item.end), item.original, item.selected)
+            }.joined(separator: "\n\n")
+            return (record.title + L10n.text("-原始识别候选.txt"), "txt", content)
+        }
         let ext = kind == "字幕" ? "srt" : kind == "Markdown" ? "md" : kind == "JSON" ? "json" : "txt"
         var content = ext == "srt" ? record.subtitles : ext == "md" ? AgentDataPublisher.presentationMarkdown(record) : record.text
         if ext == "json" {

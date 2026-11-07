@@ -61,6 +61,9 @@ struct RecordingDeliveryView: View {
                                 }
                                 Button(L10n.text("全部音频")) { state.exportAudio() }.fixedSize().disabled(state.locked || state.current?.audioFiles.isEmpty != false)
                             }
+                            if state.current?.originalRecognitionCandidates.isEmpty == false {
+                                Button(L10n.text("导出原始识别候选")) { state.export(kind: "原始识别候选") }
+                            }
                             Text(L10n.text("JSON包含时间、分段、发言人及本机音频路径；原始SRT保留识别时的文字，人工校正不会改写它。"))
                                 .font(AppTypography.secondary).foregroundStyle(.secondary)
                         }.frame(maxWidth: .infinity, alignment: .leading)

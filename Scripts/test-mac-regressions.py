@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 CORE = [
     ("seam-recovery", "ProgressiveSeamRecoverySmoke", True),
     ("window-recovery", "ProgressiveWindowRecoverySmoke", False),
+    ("repeat-pipeline", "RepeatRecoveryPipelineSmoke", False),
     ("progressive", "ProgressiveTranscriptionSmoke", True),
     ("multilingual", "MultilingualSentenceSmoke", False),
     ("paragraph-policy", "TranscriptParagraphPolicySmoke", False),
@@ -111,7 +112,7 @@ def main():
     shutil.copy2(source/"Resources/SentenceRules.json",app/"Contents/Resources/SentenceRules.json")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
     canonical_cases = ["canonical-capture","canonical-long","segmented-manifest","segmented-track","canonical-player","canonical-transcription","offline-windows","canonical-windows","window-speakers", "long-windows", "profile-long-windows", "live-long-utterance", "live-cache"]
-    plan = ["compile"]+canonical_cases+[x[0] for x in CORE]+["cli-compile", "cli-fixture", "cli-mcp", "group-cli", "localization-catalog", "agent-setup", "speaker-fragments", "sentence-speakers", "multilingual-native", "speaker-timeline", "language-policy", "inference-policy", "alignment-windows", "alignment-context", "reporting"]
+    plan = ["compile"]+canonical_cases+[x[0] for x in CORE]+["cli-compile", "cli-fixture", "cli-mcp", "group-cli", "localization-catalog", "agent-setup", "speaker-fragments", "sentence-speakers", "multilingual-native", "speaker-timeline", "language-policy", "inference-policy", "alignment-windows", "alignment-context", "repeat-recovery", "reporting"]
     if args.server_repo and args.node: plan += ["server-typecheck", "server-contracts", "account", "automatic-sync", "text-offline-seed", "remote-edit", "text-conflict-resolve", "audio-retry", "hotword-sync", "canonical-sync"]
     if args.engine_dir and args.model_root: plan += ["synthesize", "convert", "offline-asr", "format-asr", "append-asr", "synthesize-cantonese", "convert-cantonese", "live-cantonese", "synthesize-english", "english-final-speakers", "canonical-real-asr", "quiet-real-asr"]
     (run/"readiness.json").write_text(json.dumps(dict(commit=commit, inputs=inputs, cases=plan, compiledEntrypoints=[x[0] for x in specs],
@@ -135,8 +136,9 @@ def main():
     for case, _, _ in CORE:
         arguments = [run/"fixtures"/case] if case in {"cold-start","progressive"} else []
         if case=="window-recovery": arguments=[run/"fixtures"/case,source/"Tests/ProgressiveWindowRecoveryWorkerFake.py"]
+        if case=="repeat-pipeline": extra = {"TALKTUCK_TEST_ROOT": str(run/"fixtures"), "TALKTUCK_FAKE_WORKER": str(source/"Tests/RepeatRecoveryWorkerFake.py")}
         if case=="seam-recovery": arguments=[run/"fixtures"/case,source/"Tests/ProgressiveSeamRecoveryWorkerFake.py"]
-        extra = {"TALKTUCK_TEST_AGENT_OUT": str(run/"fixtures/organization-agent")} if case == "organization" else {}
+        if case != "repeat-pipeline": extra = {"TALKTUCK_TEST_AGENT_OUT": str(run/"fixtures/organization-agent")} if case == "organization" else {}
         swift(case, *arguments, **extra)
     for case in canonical_cases:
         if case == "canonical-long" and args.reuse_long_recording_result:
@@ -166,7 +168,7 @@ def main():
     if swift("cli-fixture", run/"fixtures/cli"):
         call("cli-mcp", [sys.executable, source/"Tests/AgentCLIIntegration.py", cli, run/"fixtures/cli"])
     if (run/"fixtures/organization-agent").exists(): call("group-cli", [sys.executable, source/"Tests/OrganizationCLIIntegration.py", cli, run/"fixtures/organization-agent"])
-    for case, script in [("localization-catalog", "Scripts/check-localization.py"), ("agent-setup", "Scripts/test-agent-setup.py"), ("speaker-fragments", "Tests/SpeakerAttributionSmoke.py"), ("speaker-timeline", "Tests/SpeakerTimelineSmoke.py"), ("language-policy", "Tests/LanguagePolicySmoke.py"), ("inference-policy", "Tests/InferencePolicySmoke.py"), ("alignment-windows", "Tests/AlignmentWindowsSmoke.py"), ("alignment-context", "Tests/AlignmentContextRecoverySmoke.py")]:
+    for case, script in [("localization-catalog", "Scripts/check-localization.py"), ("agent-setup", "Scripts/test-agent-setup.py"), ("speaker-fragments", "Tests/SpeakerAttributionSmoke.py"), ("speaker-timeline", "Tests/SpeakerTimelineSmoke.py"), ("language-policy", "Tests/LanguagePolicySmoke.py"), ("inference-policy", "Tests/InferencePolicySmoke.py"), ("alignment-windows", "Tests/AlignmentWindowsSmoke.py"), ("alignment-context", "Tests/AlignmentContextRecoverySmoke.py"), ("repeat-recovery", "Tests/RepeatRecoverySmoke.py")]:
         call(case, [sys.executable, source/script])
     call("multilingual-native", [sys.executable, source/"Tests/MultilingualSentenceSmoke.py"])
     call("sentence-speakers", [sys.executable, source/"Tests/SentenceSpeakerSmoke.py"])

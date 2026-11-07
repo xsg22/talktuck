@@ -117,6 +117,8 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     var legacyLiveText = ""
     var liveUtterances: [LiveUtterance] = []
     var transcriptParagraphs: [TranscriptParagraph] = []
+    /// Original machine candidates retained when duplicate recognition is corrected.
+    var originalRecognitionCandidates: [OriginalRecognitionCandidate] = []
     var speakerNames: [String: String] = [:]
     /// Explicit user names stay verbatim when the interface language changes.
     var customSpeakerNameIDs: Set<String> = []
@@ -159,7 +161,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case identitySchemaVersion, groupID, customSpeakerNameIDs, userId, syncContent, syncedAudio, source, transcriptOrigin
         case captureWarnings, id, title, created, text, subtitles, language, seconds, duration, notes, summary, isStarred, actionItems, attachments
-        case legacyLiveText, liveUtterances, transcriptParagraphs, speakerNames, speakerAliases, speakerAnalysisStatus, speakerAnalysisMessage
+        case legacyLiveText, liveUtterances, transcriptParagraphs, originalRecognitionCandidates, speakerNames, speakerAliases, speakerAnalysisStatus, speakerAnalysisMessage
         case importedCaptureSessions, transcriptionEngine, previewEngine, pendingAudioFiles, audioDurations, audioFiles, recordingSessionMode, continuousSegmentFiles, status, recoveryMessage, updated, previewText, enhancedNotes, assistantEntries, summaryCitations, enhancedNotesCitations, summaryContextWasTruncated, enhancedNotesContextWasTruncated
     }
 
@@ -211,6 +213,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
         legacyLiveText = try values.decodeIfPresent(String.self, forKey: .legacyLiveText) ?? ""
         liveUtterances = try values.decodeIfPresent([LiveUtterance].self, forKey: .liveUtterances) ?? []
         transcriptParagraphs = try values.decodeIfPresent([TranscriptParagraph].self, forKey: .transcriptParagraphs) ?? []
+        originalRecognitionCandidates = try values.decodeIfPresent([OriginalRecognitionCandidate].self, forKey: .originalRecognitionCandidates) ?? []
         speakerNames = try values.decodeIfPresent([String: String].self, forKey: .speakerNames) ?? [:]
         customSpeakerNameIDs = try values.decodeIfPresent(Set<String>.self, forKey: .customSpeakerNameIDs) ?? []
         speakerAliases = try values.decodeIfPresent([String: String].self, forKey: .speakerAliases) ?? [:]

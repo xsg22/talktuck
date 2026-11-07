@@ -17,9 +17,17 @@ import Foundation
         precondition(TranscriptReadability.groups([a,paused]).count == 2)
         var record = MeetingRecord(title: "policy", text: "", status: .recorded)
         record.audioFiles = ["a"]; record.audioDurations = ["a": 20]
-        let base = TranscriptionOutput(text: "第一句。第二句。", subtitles: "", paragraphs: [TranscriptParagraph(text: "第一句。第二句。",start:0,end:20)])
+        let original = OriginalRecognitionCandidate(start: 0, end: 20, original: "第一句。第一句。第二句。", selected: "第一句。第二句。")
+        let base = TranscriptionOutput(text: "第一句。第二句。", subtitles: "", paragraphs: [TranscriptParagraph(text: "第一句。第二句。",start:0,end:20)], originalCandidates: [original])
+        let oldOutput = try JSONDecoder().decode(TranscriptionOutput.self, from: Data(#"{"text":"旧稿","subtitles":""}"#.utf8))
+        precondition(oldOutput.originalCandidates.isEmpty, "Old progressive checkpoints remain readable")
         try MeetingRecordingAppend.apply(outputs:[base.readingFallback()],files:["a"],durations:[20],appending:false,to:&record)
         precondition(record.hasCurrentParagraphs && record.transcriptParagraphs.allSatisfy { $0.start == nil })
+        precondition(record.originalRecognitionCandidates.count == 1 && record.originalRecognitionCandidates[0].audioFile == "a")
+        precondition(record.originalRecognitionCandidates[0].original == original.original)
+        let roundTrip = try JSONDecoder().decode(MeetingRecord.self, from: JSONEncoder().encode(record))
+        precondition(roundTrip.originalRecognitionCandidates == record.originalRecognitionCandidates)
+
         let aligned = [TranscriptParagraph(text:"第一句。",start:1,end:2,speakerIDs:["0"]),TranscriptParagraph(text:"第二句。",start:8,end:9,speakerIDs:["0"])]
         try MeetingRecordingAppend.applySpeakerParagraphs(aligned,base:base,file:"a",to:&record)
         precondition(record.hasCurrentParagraphs && record.transcriptParagraphs.count == 2 && record.subtitles.contains("00:00:08,000"))
@@ -37,7 +45,7 @@ import Foundation
         var shifted = uncertain; shifted.audioFile = "b"; shifted.applyAudioOffset(10)
         var continued = partial; continued.audioFiles = ["a","b"]; continued.audioDurations = ["a":10,"b":20]
         precondition(shifted.start == nil && shifted.alignedStart == 11 && shifted.localStart == 1 && TranscriptPlaybackRange(paragraph:shifted,record:continued)?.start == 1)
-        let root=FileManager.default.temporaryDirectory.appendingPathComponent("sentence-time-"+UUID().uuidString)
+        let root=(ProcessInfo.processInfo.environment["TALKTUCK_TEST_ROOT"].map { URL(fileURLWithPath:$0, isDirectory:true) } ?? FileManager.default.temporaryDirectory).appendingPathComponent("sentence-time-"+UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:root) }
         let library=try MeetingLibrary(root:root), user=UUID()
         let adapter=MacLibrarySyncAdapter(library:library);try adapter.activate(userId:user)
@@ -47,6 +55,7 @@ import Foundation
         try adapter.apply(LibrarySyncEntity(kind:.recording,id:partial.id,version:1,value:value),userId:user)
         let saved=try library.load(partial.id)
         precondition(saved.transcriptParagraphs.count==1 && saved.transcriptParagraphs[0].alignedStart==1 && saved.transcriptParagraphs[0].alignedEnd==2)
+        precondition(saved.originalRecognitionCandidates == partial.originalRecognitionCandidates, "Sync cannot discard original machine candidates")
         let published=try AgentDataPublisher.snapshot(saved,libraryRoot:root)
         precondition(published.paragraphs[0].start==nil && published.paragraphs[0].alignedStart==1 && published.paragraphs[0].text==full)
         var changed=value; changed.recording!.paragraphs[0].text="人工改写。"

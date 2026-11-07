@@ -9,7 +9,7 @@ class Audio:
   start,stop,step=key.indices(self.count);return Audio(len(range(start,stop,step)))
 sys.modules['numpy']=SimpleNamespace(concatenate=lambda arrays:Audio(sum(map(len,arrays))))
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'Native/QwenRuntime'))
-from worker import align_words_with_context,with_following
+from worker import align_words_with_context,with_following,repair_alignment_seam
 
 class Model:
  def __init__(self,retry='good'):self.calls=[];self.retry=retry
@@ -36,4 +36,25 @@ class LimitModel(Model):
   return SimpleNamespace(items=[SimpleNamespace(text='甲',start_time=0,end_time=.5),SimpleNamespace(text='乙',start_time=301,end_time=302)])
 model=LimitModel();rows=align_words_with_context(model,Audio(300*16000),'甲乙','Chinese',longclip,nextclip,following)
 assert model.calls==[300*16000] and rows[-1].get('timingUncertain')
+# A boundary retry uses real adjacent audio, preserves all text and separators,
+# and only publishes results with reliable times on both sides.
+left=dict(start=0,end=2,text='前末',language='zh'); right=dict(start=2,end=4,text='后续',language='zh')
+a=[dict(text='前',start=.3,end=.7,separator=''),dict(text='末',start=2,end=2,separator='',timingUncertain=True)]
+b=[dict(text='后',start=2,end=2.3,separator='\n'),dict(text='续',start=2.4,end=2.7,separator='')]
+class SeamModel:
+ def __init__(self,bad=False):self.calls=0;self.bad=bad
+ def generate(self,*,audio,text,language):
+  self.calls+=1
+  assert len(audio)==64000 and text=='前末\n后续'
+  times=[(.3,.7),(1.2,1.7),(2.0,2.3),(2.4,2.7)]
+  if self.bad:times[1]=(1.2,1.2)
+  return SimpleNamespace(items=[SimpleNamespace(text=t,start_time=x,end_time=y) for t,(x,y) in zip('前末后续',times)])
+model=SeamModel();x,y=repair_alignment_seam(model,left,Audio(32000),a,right,Audio(32000),b)
+assert model.calls==1 and ''.join(w.get('separator','')+w['text'] for w in x+y)=='前末\n后续'
+assert not any(w.get('timingUncertain') for w in x+y)
+model=SeamModel(True);x,y=repair_alignment_seam(model,left,Audio(32000),a,right,Audio(32000),b)
+assert x==a and y==b
+model=SeamModel();x,y=repair_alignment_seam(model,left,Audio(32000),a,dict(right,start=2.5),Audio(32000),b)
+assert x==a and y==b and model.calls==0
+print('PASS: bounded real-audio seam repair, exact text, uncertainty and non-contiguous fallback')
 print('PASS: contiguous bounded audio retry, missing context fallback, failed retry fallback, text and time safety')

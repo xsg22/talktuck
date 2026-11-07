@@ -24,6 +24,14 @@ struct TranscriptParagraph: Codable, Equatable, Identifiable, Sendable {
         alignedStart = alignedStart.map { $0 + offset }; alignedEnd = alignedEnd.map { $0 + offset }
     }
 }
+/// Initial machine output retained when a bounded re-recognition is selected.
+struct OriginalRecognitionCandidate: Codable, Equatable, Sendable {
+    var audioFile: String? = nil
+    let start: Double
+    let end: Double
+    let original: String
+    let selected: String
+}
 struct LiveUtterance: Codable, Equatable, Identifiable {
     var id = UUID()
     var text: String

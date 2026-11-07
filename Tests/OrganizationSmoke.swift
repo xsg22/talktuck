@@ -5,7 +5,7 @@ import CryptoKit
     @MainActor static func main() throws {
         try unselectedCardActions()
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-organization-test-" + UUID().uuidString)
+        let root = (ProcessInfo.processInfo.environment["TALKTUCK_TEST_ROOT"].map { URL(fileURLWithPath:$0, isDirectory:true) } ?? fm.temporaryDirectory).appendingPathComponent("talktuck-organization-test-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
@@ -130,7 +130,7 @@ import CryptoKit
 
     @MainActor static func unselectedCardActions() throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-card-actions-" + UUID().uuidString)
+        let root = (ProcessInfo.processInfo.environment["TALKTUCK_TEST_ROOT"].map { URL(fileURLWithPath:$0, isDirectory:true) } ?? fm.temporaryDirectory).appendingPathComponent("talktuck-card-actions-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
@@ -138,6 +138,7 @@ import CryptoKit
         _ = try library.save(selected)
         var target = MeetingRecord(title: "右键目标", text: "应被导出的内容", duration: 3, status: .completed)
         target.subtitles = "1\n00:00:00,000 --> 00:00:03,000\n应被导出的内容\n"
+        target.originalRecognitionCandidates = [OriginalRecognitionCandidate(start: 0, end: 3, original: "首版候选", selected: "复核候选")]
         let source = root.appendingPathComponent("source.wav")
         let bytes = Data("target-audio-preserved".utf8)
         try bytes.write(to: source)
@@ -158,6 +159,9 @@ import CryptoKit
             if kind == "字幕" { precondition(document.content == target.subtitles) }
         }
         precondition((try? library.load(selected.id).title) == "当前页面已改名", "导出另一条前保存当前编辑")
+        let candidates = state.exportDocument(kind: "原始识别候选", recordingID: target.id)!
+        precondition(candidates.content.contains("首版候选") && candidates.content.contains("复核候选"))
+        precondition(!candidates.content.contains("当前页面的正文"), "候选导出必须绑定正确录音")
         precondition(state.exportDocument(kind: "文本", recordingID: UUID()) == nil, "失效目标不能回退为当前录音")
         let destination = try state.exportAudio(to: root, recordingID: target.id)
         let exports = try fm.contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
