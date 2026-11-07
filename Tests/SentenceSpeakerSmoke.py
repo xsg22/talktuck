@@ -66,6 +66,22 @@ assert len(r)==1 and r[0]['text']=='我说完。' and r[0].get('timingUncertain'
 assert r[0]['speakerIDs']==['0'] and r[0]['alignedStart']==.3 and r[0]['alignedEnd']==.7,'Keep true aligned playback bounds separate from uncertain full-sentence times'
 from paragraphs import group_words
 assert group_words(r)==r,'Regrouping must retain both full sentence and partial playback bounds'
+# Out-of-bounds suffixes preserve exact text and usable preceding anchors,
+# while their own times remain explicitly uncertain and cannot imply voice.
+items=[dict(text='前',start=0,end=.4),dict(text='后',start=.4,end=.8),dict(text='续',start=1.5,end=1.7),dict(text='尾',start=1.7,end=2)]
+rows=aligned_words('前后续尾。',items,5,1)
+assert ''.join(x['text'] for x in rows)=='前后续尾。'
+assert all(x.get('timingUncertain') and x['start']==x['end']==6 for x in rows[-2:])
+r=attribute('前后续尾。',items,[],5,1,frames=[frame(5,6,.95,.01)])
+assert body(r)=='前后续尾。' and r[-1].get('timingUncertain') is True,r
+assert all(x['end']<=6 for x in r),r
+# Invalid timing in the middle, NaN, and reversed intervals remain hard errors.
+for invalid in ([dict(text='甲',start=0,end=2),dict(text='乙',start=.8,end=.9)],
+                [dict(text='甲',start=float('nan'),end=.2)],
+                [dict(text='甲',start=.5,end=.4)]):
+    try:aligned_words(''.join(x['text'] for x in invalid),invalid,0,1);raise AssertionError('Invalid alignment accepted')
+    except ValueError:pass
+assert group_words(r)==r,'Regrouping must retain an uncertain suffix'
 r=attribute('说完了。',[dict(text='说',start=0,end=.2),dict(text='完',start=.2,end=.4),dict(text='了',start=.4,end=.4)],[],0,.4,frames=[frame(0,.4,.95,.01)])
 assert not r[0].get('timingUncertain') and r[0]['end']==.4,'Coincident real end anchor must remain playable'
 from paragraphs import group_words
