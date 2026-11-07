@@ -78,22 +78,10 @@ struct RecordingAppConfigurationView: View {
                     TalkTuckChoicePicker(title: "默认音源", items: MeetingRecordingMode.allCases.map { ($0.title, $0) }, selection: $state.recordingMode)
                 }
                 Divider()
-                TalkTuckSettingRow(title: L10n.text("会话类型")) {
-                    TalkTuckChoicePicker(title: "录音会话", items: RecordingSessionMode.allCases.map { ($0.title, $0) }, selection: $state.recordingSessionMode)
-                }
-                Divider()
                 TalkTuckSettingRow(title: L10n.text("默认转录语言")) {
                     TalkTuckChoicePicker(title: L10n.text("默认转录语言"), items: TranscriptionLanguage.allCases.map { ($0.title, $0.rawValue) }, selection: $state.language)
                 }
-                Divider()
-                TalkTuckSettingRow(title: L10n.text("录音模式")) {
-                    TalkTuckChoicePicker(title: "录音模式", items: RecordingProfile.allCases.map { ($0.title, $0) }, selection: $state.recordingProfile)
-                }
             }.disabled(state.locked)
-            TalkTuckCard(quiet: true) {
-                Text(L10n.text(state.recordingProfile.title)).font(AppTypography.heading)
-                Text(L10n.text(state.recordingProfile.detail)).font(AppTypography.secondary).foregroundStyle(.secondary).lineSpacing(7)
-            }
             TalkTuckInfo(text: L10n.text("录音过程中设置会锁定，修改只影响下一次录音。隐藏窗口或切换 mini 不会停止采集。"))
             TalkTuckInfo(text: L10n.text("普通话和英语实时字幕使用中英双语模型，粤语实时字幕可能有数秒延迟；最终转录遵循所选语言。"))
         }

@@ -80,11 +80,8 @@ final class AppState: ObservableObject {
     @Published var syncReceipt = ""
     @Published var syncFeedback: String?
     @Published var remoteURL: URL?
-    @Published var recordingProfile: RecordingProfile = .realtime
-    @Published var recordingSessionMode: RecordingSessionMode = .conference
     @Published private(set) var activeRecordingSessionMode: RecordingSessionMode = .conference
     @Published private(set) var continuousSegments: [ContinuousSegmentInfo] = []
-    @Published private(set) var activeRecordingProfile: RecordingProfile = .realtime
     @Published var mainWindowVisible = true {
         didSet { if mainWindowVisible && !oldValue { flushLivePresentation() } }
     }
@@ -99,7 +96,7 @@ final class AppState: ObservableObject {
     @Published private(set) var inlineRecorderVisible = false
     @Published private(set) var recordingNavigationRevision = 0
     @Published private(set) var miniSessionID: UUID?
-    var compactRecordingUI: Bool { recording && activeRecordingProfile.compact(windowVisible: mainWindowVisible, expanded: expandedRealtime) }
+    var compactRecordingUI: Bool { recording && !mainWindowVisible }
     private var pendingLivePresentation: (text: String, partial: String)?
     private var lastLivePresentation = Date.distantPast
     private var lastLiveSave = Date.distantPast
@@ -749,11 +746,9 @@ final class AppState: ObservableObject {
     }
 
     /// 在开始新会话前固定处理策略；录音中不因窗口或设置变化关闭ASR。
-    func prepareRecordingProfile() {
+    func prepareLiveRecording() {
         guard !locked else { return }
-        activeRecordingProfile = recordingProfile
-        activeRecordingSessionMode = recordingSessionMode
-        liveEnabled = activeRecordingProfile.usesLiveASR && (TranscriptionLanguage(rawValue:language)?.supportsLivePreview == true)
+        liveEnabled = TranscriptionLanguage(rawValue:language)?.supportsLivePreview == true
         expandedRealtime = false; pendingLivePresentation = nil
         lastLivePresentation = .distantPast; lastLiveSave = .distantPast
     }
@@ -767,20 +762,20 @@ final class AppState: ObservableObject {
         if !continuing {
             guard speechModels.ready else { showModelDownload = true; return }
             guard model != nil, ASRResources.executable("qwen-asr") != nil,
-                  !recordingProfile.usesLiveASR || (ASRResources.paraformer != nil && ASRResources.executable("paraformer-live") != nil) else {
+                  ASRResources.paraformer != nil, ASRResources.executable("paraformer-live") != nil else {
                 error = "语音引擎缺失，请重新安装 App。"; return
             }
         }
         if continuing && current == nil { return }
-        if continuing, let current { recordingSessionMode = current.recordingSessionMode }
+        // Preserve legacy continuous-recording recovery; all new recordings share one pipeline.
+        activeRecordingSessionMode = continuing ? (current?.recordingSessionMode ?? .conference) : .conference
         if recordingMode.needsMicrophone {
             do { try MeetingRecorder.requireMicrophone() }
             catch { self.error = error.localizedDescription; return }
         }
-        prepareRecordingProfile()
-        liveEnabled = activeRecordingProfile.usesLiveASR && (TranscriptionLanguage(rawValue:continuing ? (current?.language ?? language) : language)?.supportsLivePreview == true)
+        prepareLiveRecording()
+        liveEnabled = TranscriptionLanguage(rawValue:continuing ? (current?.language ?? language) : language)?.supportsLivePreview == true
         error = nil
-        if activeRecordingProfile != .realtime || activeRecordingSessionMode == .continuous { showMiniRecorder() }
         continuousSegments = []
         continuousSegmenter=nil
         continuousProcessingCount = 0

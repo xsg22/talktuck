@@ -30,27 +30,26 @@ import Foundation
         main.isReleasedWhenClosed = false
         state.mainWindow = main
         let controller = MiniRecordingController(state: state, defaults: defaults)
-        state.recordingProfile = .afterRecording
+        state.showMiniRecorder()
         try await Task.sleep(nanoseconds: 100_000_000)
-        precondition(state.miniMode && controller.panel?.isVisible == true, "选择仅录音进入 mini")
+        precondition(state.miniMode && controller.panel?.isVisible == true, "用户可以主动打开 mini")
         precondition(!state.recording && !state.preparing && !state.busy, "模式选择不能偷偷启动采集")
-        precondition(state.activeRecordingProfile == .realtime && state.liveEnabled, "待开始不修改活动会话")
-        state.prepareRecordingProfile(); state.recording = true; state.elapsed = 32
+        precondition(state.liveEnabled, "待开始不关闭实时识别")
+        state.prepareLiveRecording(); state.recording = true; state.elapsed = 32
         let previousLive = state.liveEnabled
         state.showRecordingWindow()
         precondition(!state.miniMode && controller.panel?.isVisible == false && state.expandedRealtime)
         precondition(state.recording && state.elapsed == 32 && state.liveEnabled == previousLive, "展开不改变采集、计时或ASR")
         state.showMiniRecorder(); state.hideMiniToMenuBar()
         precondition(state.miniMode && controller.panel?.isVisible == false && !state.miniWindowVisible)
-        precondition(state.recording && !state.liveEnabled, "收起到菜单栏保留纯录音会话")
+        precondition(state.recording && state.liveEnabled, "收起到菜单栏保留实时转录会话")
         state.showMiniRecorder(); controller.panel?.performClose(nil)
         precondition(state.recording, "关闭面板不停止会话")
         state.recording = false
-        state.recordingProfile = .backgroundRealtime
         try await Task.sleep(nanoseconds: 100_000_000)
-        state.prepareRecordingProfile(); state.recording = true
+        state.prepareLiveRecording(); state.recording = true
         state.showRecordingWindow(); state.showMiniRecorder()
-        precondition(state.liveEnabled && state.activeRecordingProfile == .backgroundRealtime, "切换窗口不关闭实时模型")
+        precondition(state.liveEnabled, "切换窗口不关闭实时识别模型")
         state.recordingIssue = "测试：输入设备已断开，录音已暂停"
         try await Task.sleep(nanoseconds: 100_000_000)
         precondition(controller.panel?.frame.height == 168, "异常展开且保留处理空间")
@@ -62,7 +61,7 @@ import Foundation
         let visible = NSRect(x: -1600, y: 0, width: 1600, height: 900)
         let fitted = MiniRecordingController.constrainedFrame(NSRect(x: 5000, y: -900, width: 440, height: 204), screens: [visible])
         precondition(visible.contains(fitted), "拔掉屏幕后悬浮条必须回到可见区，支持负坐标副屏")
-        state.recording = false; state.recordingProfile = .realtime
+        state.recording = false; state.showRecordingWindow()
         try await Task.sleep(nanoseconds: 100_000_000)
         precondition(!state.miniMode && controller.panel?.isVisible == false, "选回默认实时恢复完整窗口")
         var requestedOpen = false

@@ -25,6 +25,8 @@
   "切换为声波": "Show waveform",
   "显示实时字幕": "Show live captions",
   "仅录音 · 停止后转录": "Audio only · Transcribe after recording",
+  "实时字幕暂不可用": "Live captions are unavailable",
+  "实时字幕暂不可用，停止并保存后将继续处理转录。": "Live captions are unavailable. Transcription will continue after you stop and save.",
   "等待语音…": "Waiting for speech…",
   "实时转录预览": "Live transcript preview",
   "切换中": "Switching",

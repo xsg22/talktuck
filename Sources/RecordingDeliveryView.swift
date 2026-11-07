@@ -10,7 +10,7 @@ struct RecordingCanvasView: View {
             if state.isViewingRecording && (state.compactRecordingUI || !state.liveEnabled) {
                 VStack(alignment: .leading, spacing: 16) {
                     Text(L10n.text(state.paused ? "录音已暂停" : "后台录音中")).font(AppTypography.heading).padding(.bottom, 6)
-                    Text(L10n.text(state.liveEnabled ? "实时识别继续运行。可展开正文查看最新文字。" : "当前不加载实时识别模型，停止并保存后自动生成转录。"))
+                    Text(L10n.text(state.liveEnabled ? "实时识别继续运行。可展开正文查看最新文字。" : "实时字幕暂不可用，停止并保存后将继续处理转录。"))
                         .font(.system(size: 14)).foregroundStyle(.secondary)
                     if state.mainWindowVisible && state.liveEnabled {
                         Button(L10n.text("展开实时正文")) { state.expandedRealtime = true }
@@ -22,9 +22,6 @@ struct RecordingCanvasView: View {
             } else {
                 TranscriptTimelineView(state: state).frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(TalkTuckTheme.surface, in: RoundedRectangle(cornerRadius: 12))
-                if state.isViewingRecording && state.activeRecordingProfile == .backgroundRealtime {
-                    Button(L10n.text("收起实时正文")) { state.expandedRealtime = false }
-                }
             }
 
         }

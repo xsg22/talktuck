@@ -61,14 +61,14 @@ import Foundation
         state.playTranscriptParagraph(paragraph)
         try await Task.sleep(nanoseconds: 60_000_000)
         check(state.playing && state.recording && capture.state == .recording, "历史单句回放不能影响采集")
-        let profile = state.activeRecordingProfile, mode = state.recordingMode
+        let liveEnabled = state.liveEnabled, mode = state.recordingMode
         state.search = "不匹配"; state.groupFilter = "ungrouped"
         let revision = state.recordingNavigationRevision
         state.returnToRecording()
         check(state.selection == active.id && state.isViewingRecording && !state.showsInlineRecorder)
         check(state.recordingNavigationRevision == revision + 1 && state.search.isEmpty && state.groupFilter.isEmpty)
         check(!state.playing && capture.state == .recording && state.recording)
-        check(state.activeRecordingProfile == profile && state.recordingMode == mode)
+        check(state.liveEnabled == liveEnabled && state.recordingMode == mode)
         state.select(historic.id)
         state.togglePlayback()
         check(state.playing, "历史完整音频也可以回放")
