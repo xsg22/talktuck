@@ -3,7 +3,7 @@ import subprocess
 sources=[str(p) for p in Path('Sources').glob('*.swift') if p.name!='TalkTuckApp.swift']
 app=Path('Sources/TalkTuckApp.swift').read_text().replace('@main\n','')
 Path('.build/TestAppTypes.swift').write_text(app)
-tests=['AgentDataSmoke','LibrarySmoke','AppStateSmoke','SpeakerEditingSmoke','MeetingWorkspacePersistenceSmoke','QuitFlowSmoke','RecorderSmoke','CapturePolishSmoke','ParagraphPlaybackSmoke','RecordingProfileSmoke','MiniRecordingSmoke','ContinuousRecordingSmoke','LiveAudioSmoke','LiveSourceSwitchSmoke','RecordingBrowsingSmoke','ASRModelDownloadSmoke']
+tests=['AgentDataSmoke','LibrarySmoke','AppStateSmoke','SpeakerEditingSmoke','MeetingWorkspacePersistenceSmoke','QuitFlowSmoke','RecorderSmoke','CapturePolishSmoke','ParagraphPlaybackSmoke','LiveRecordingSmoke','MiniRecordingSmoke','ContinuousRecordingSmoke','LiveAudioSmoke','LiveSourceSwitchSmoke','RecordingBrowsingSmoke','ASRModelDownloadSmoke']
 texts=[]
 for test in tests:
     texts.append(Path('Tests/'+test+'.swift').read_text().replace('@main',''))

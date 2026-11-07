@@ -34,7 +34,7 @@ CORE = [
     ("speaker-edit", "SpeakerEditingSmoke", False), ("paragraph-playback", "ParagraphPlaybackSmoke", True),
     ("organization", "OrganizationSmoke", False), ("recording-domain", "RecordingDomainSmoke", False),
     ("mini", "MiniRecordingSmoke", True), ("recording-browsing", "RecordingBrowsingSmoke", True),
-    ("capture-polish", "CapturePolishSmoke", True), ("recording-profile", "RecordingProfileSmoke", False),
+    ("capture-polish", "CapturePolishSmoke", True), ("live-recording", "LiveRecordingSmoke", False),
     ("cold-start", "AgentColdStartSmoke", True),
 ]
 EXTRA = [

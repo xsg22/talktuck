@@ -526,7 +526,6 @@ struct MainView: View {
                 Menu(L10n.text("录音设置")) {
                     Picker(L10n.text("音源"), selection: $state.recordingMode) { ForEach(MeetingRecordingMode.allCases) { Text($0.title).tag($0) } }
                     Picker(L10n.text("转录语言"), selection: $state.language) { ForEach(TranscriptionLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
-                    Picker(L10n.text("录音模式"), selection: $state.recordingProfile) { ForEach(RecordingProfile.allCases) { Text($0.title).tag($0) } }
                 }.disabled(state.locked)
                 Divider()
                 Button(L10n.text("继续录音")) { state.continueRecording() }.disabled(state.locked || state.syncing)
@@ -631,14 +630,11 @@ struct MainView: View {
     }
     @ViewBuilder private var recordingSettingsMenu: some View {
         Picker(L10n.text("音源"), selection: $state.recordingMode) { ForEach(MeetingRecordingMode.allCases) { Text($0.title).tag($0) } }
-        Picker(L10n.text("会话类型"), selection: $state.recordingSessionMode) { ForEach(RecordingSessionMode.allCases) { Text($0.title).tag($0) } }
         Picker(L10n.text("转录语言"), selection: $state.language) { ForEach(TranscriptionLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
-        Picker(L10n.text("录音模式"), selection: $state.recordingProfile) { ForEach(RecordingProfile.allCases) { Text($0.title).tag($0) } }
     }
     private var recordingConfigurationSummary: String {
         let language = TranscriptionLanguage(rawValue:state.language)?.title ?? L10n.text("普通话")
-        let profile = state.recordingProfile == .realtime ? "实时转录" : state.recordingProfile == .backgroundRealtime ? "后台实时" : "仅录音 · 录完转录"
-        return [state.recordingMode.title, language, L10n.text(profile)].joined(separator: " · ")
+        return [state.recordingMode.title, language].joined(separator: " · ")
     }
     private func clock(_ value: Double) -> String {
         let seconds = Int(max(0, value))

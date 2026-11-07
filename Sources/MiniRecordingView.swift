@@ -20,13 +20,6 @@ final class MiniRecordingController: NSObject, NSWindowDelegate {
         pinned = defaults.object(forKey: pinnedKey) as? Bool ?? true
         super.init()
         state.miniController = self
-        state.$recordingProfile.dropFirst().removeDuplicates().sink { [weak self] profile in
-            DispatchQueue.main.async {
-                guard let self, let state = self.state, !state.locked else { return }
-                if profile == .realtime { state.showRecordingWindow() }
-                else { state.showMiniRecorder() }
-            }
-        }.store(in: &subscriptions)
         state.objectWillChange.sink { [weak self] in
             guard let self, !self.refreshScheduled else { return }
             self.refreshScheduled = true
@@ -131,7 +124,6 @@ struct MiniRecordingView: View {
     private var accent: Color { dark ? Color(red: 0.38, green: 0.65, blue: 1) : TalkTuckTheme.accent }
     private var surface: Color { TalkTuckTheme.surface.opacity(0.96) }
     private var mutedInk: Color { ink.opacity(contrast == .increased ? 0.82 : 0.70) }
-    private var profile: RecordingProfile { state.locked ? state.activeRecordingProfile : state.recordingProfile }
     private var hasSession: Bool { state.miniSessionID != nil && state.miniSessionID == (state.recording ? state.recordingRecord?.id : state.current?.id) }
     private var headline: String {
         if state.preparing { return state.recording ? "正在保存录音" : "正在准备录音" }
@@ -224,7 +216,7 @@ struct MiniRecordingView: View {
             if !preview.confirmed.isEmpty { Text(preview.confirmed).foregroundStyle(ink) }
             if !preview.partial.isEmpty { Text(preview.partial).foregroundStyle(mutedInk) }
             else if preview.confirmed.isEmpty {
-                Text(L10n.text(!state.liveEnabled ? "仅录音 · 停止后转录" : state.liveStatus.isEmpty ? "等待语音…" : state.liveStatus)).foregroundStyle(mutedInk)
+                Text(L10n.text(!state.liveEnabled ? "实时字幕暂不可用" : state.liveStatus.isEmpty ? "等待语音…" : state.liveStatus)).foregroundStyle(mutedInk)
             }
             }
         }.font(.system(size: 12)).lineLimit(1).truncationMode(.head)
@@ -234,9 +226,6 @@ struct MiniRecordingView: View {
     @ViewBuilder private var options: some View {
         Button(L10n.text("显示完整录音")) { if state.recording { state.returnToRecording() } else { state.showRecordingWindow() } }
         if !state.locked {
-            Picker(L10n.text("录音模式"), selection: $state.recordingProfile) {
-                ForEach(RecordingProfile.allCases) { Text($0.title).tag($0) }
-            }
             Picker(L10n.text("录音音源"), selection: $state.recordingMode) {
                 ForEach(MeetingRecordingMode.allCases) { Text($0.title).tag($0) }
             }

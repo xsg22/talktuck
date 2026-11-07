@@ -44,7 +44,7 @@ struct RecordingMenuBarView: View {
     var body: some View {
         Text(state.recording ? (state.paused ? "录音已暂停" : "正在录音") : state.preparing ? "正在准备或保存录音" : "正在处理转录任务").font(.headline)
         if state.recording {
-            Text(state.activeRecordingProfile.title)
+            Text(L10n.text("实时转录"))
             Text("已录制 \(state.elapsed / 60) 分 \(state.elapsed % 60) 秒")
         }
         if let issue = state.recordingIssue { Text(issue) }
