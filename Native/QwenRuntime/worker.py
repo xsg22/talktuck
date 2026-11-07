@@ -125,22 +125,64 @@ def transcribe_stream(model_path,language,output,hints_path):
     output=pathlib.Path(output);temp=output.with_suffix('.partial')
     temp.write_text(json.dumps({'segments':result},ensure_ascii=False));temp.replace(output)
 
+def adjacent_context(clip, following, following_audio, audio_frames):
+    """Return up to 3s of contiguous audio after the clip, bounded by the model limit."""
+    if following is None or following_audio is None:return None
+    end=float(clip['end']); start=float(following['start'])
+    duration=end-float(clip['start'])
+    if abs(len(following_audio)-round((float(following['end'])-start)*16000))>1:return None
+    if abs(audio_frames-round(duration*16000))>1:return None
+    if start>end+1/16000 or float(following['end'])<=end:return None
+    begin=max(0,round((end-start)*16000))
+    count=min(3*16000,MAX_ALIGNMENT_SECONDS*16000-audio_frames,len(following_audio)-begin)
+    return following_audio[begin:begin+count] if count>0 else None
+
+def align_words_with_context(model,audio,text,language,clip,following=None,following_audio=None):
+    import numpy as np
+    from speaker_attribution import aligned_words
+    duration=clip['end']-clip['start']
+    def generate(samples):
+        result=model.generate(audio=samples,text=text,language=language)
+        return [dict(text=i.text,start=i.start_time,end=i.end_time) for i in result.items]
+    items=generate(audio)
+    outside=lambda x:x['start']>duration or x['end']>duration+.3
+    if any(outside(x) for x in items):
+        context=adjacent_context(clip,following,following_audio,len(audio))
+        if context is not None:
+            try:
+                retried=generate(np.concatenate((audio,context)))
+                if not any(outside(x) for x in retried):
+                    rows=aligned_words(text,retried,clip['start'],duration)
+                    print('ForcedAligner: recovered with contiguous audio context',file=sys.stderr,flush=True)
+                    return rows
+            except (ValueError,RuntimeError) as error:
+                print('ForcedAligner: context retry unavailable: '+type(error).__name__,file=sys.stderr,flush=True)
+    return aligned_words(text,items,clip['start'],duration)
+
+def with_following(items):
+    iterator=iter(items)
+    current=next(iterator,None)
+    while current is not None:
+        following=next(iterator,None)
+        yield current,following
+        current=following
+
 def align_stream(model_path,turns_path,output):
     import numpy as np
     import mlx.core as mx
     from mlx_audio.stt import load
     configure_memory(mx)
-    from speaker_attribution import aligned_words
     from sentence_speakers import attribute_sentences
     voice=json.loads(pathlib.Path(turns_path).read_text())
     model=load(pathlib.Path(model_path).resolve(strict=True));paragraphs=[]
     hotwords=[]
-    for index,(clip,data) in enumerate(stream_clips(MAX_ALIGNMENT_SECONDS)):
+    for index,((clip,data),following) in enumerate(with_following(stream_clips(MAX_ALIGNMENT_SECONDS))):
         text=clip.get('text');language=clip.get('language','auto')
         if not isinstance(text,str) or not text or len(text)>100000:raise ValueError('Invalid alignment text')
-        aligned=model.generate(audio=np.frombuffer(data,dtype='<f4'),text=text,language=alignment_language(language,text))
-        items=[dict(text=i.text,start=i.start_time,end=i.end_time) for i in aligned.items]
-        rows=aligned_words(text,items,clip['start'],clip['end']-clip['start'])
+        next_clip,next_data=following if following is not None else (None,None)
+        audio=np.frombuffer(data,dtype='<f4')
+        next_audio=np.frombuffer(next_data,dtype='<f4') if next_data is not None else None
+        rows=align_words_with_context(model,audio,text,alignment_language(language,text),clip,next_clip,next_audio)
         hotwords.extend(clip.get('hotwords',[]))
         if rows:rows[0]['separator']=clip.get('separator','' if index==0 else '\n')
         paragraphs.extend(rows);mx.clear_cache()
@@ -153,23 +195,23 @@ def align_speakers(model_path,manifest_path,turns_path,output):
     import mlx.core as mx
     from mlx_audio.stt import load
     configure_memory(mx)
-    from speaker_attribution import aligned_words
     from sentence_speakers import attribute_sentences
     manifest=pathlib.Path(manifest_path).resolve(strict=True);clips=json.loads(manifest.read_text())
     voice=json.loads(pathlib.Path(turns_path).read_text())
     model=load(pathlib.Path(model_path).resolve(strict=True));paragraphs=[]
     hotwords=[]
-    for index,clip in enumerate(clips):
+    def read_audio(clip):
         path=pathlib.Path(clip['audio']).resolve(strict=True)
         if path.parent!=manifest.parent:raise ValueError('Invalid alignment audio path')
         with wave.open(str(path),'rb') as w:
             if w.getframerate()!=16000 or w.getnchannels()!=1 or w.getsampwidth()!=2:raise ValueError('Invalid alignment audio format')
-            audio=np.frombuffer(w.readframes(w.getnframes()),dtype='<i2').astype(np.float32)/32768
-        # 中文分词器也支持混合拉丁词；显式英语使用英语分词。
+            return np.frombuffer(w.readframes(w.getnframes()),dtype='<i2').astype(np.float32)/32768
+    def inputs():
+        for clip in clips:yield clip,read_audio(clip)
+    for index,((clip,audio),following) in enumerate(with_following(inputs())):
+        next_clip,next_audio=following if following is not None else (None,None)
         language=alignment_language(clip.get('language','auto'),clip['text'])
-        aligned=model.generate(audio=audio,text=clip['text'],language=language)
-        items=[dict(text=i.text,start=i.start_time,end=i.end_time) for i in aligned.items]
-        rows=aligned_words(clip['text'],items,clip['start'],clip['end']-clip['start'])
+        rows=align_words_with_context(model,audio,clip['text'],language,clip,next_clip,next_audio)
         hotwords.extend(clip.get('hotwords',[]))
         if rows:rows[0]['separator']=clip.get('separator','' if index==0 else '\n')
         paragraphs.extend(rows);mx.clear_cache()
