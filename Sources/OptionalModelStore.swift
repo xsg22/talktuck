@@ -26,7 +26,7 @@ final class OptionalModelStore: ObservableObject {
 
     init(root: URL? = nil, defaults: UserDefaults = .standard) {
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CoHearTranscribe/AuxiliaryModels", isDirectory: true)
+            .appendingPathComponent("TalkTuck/AuxiliaryModels", isDirectory: true)
         self.defaults = defaults
         // 不在构造期联网或读取数GB权重，设置窗口出现后再验证已有文件。
     }

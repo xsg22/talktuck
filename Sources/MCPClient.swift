@@ -39,7 +39,7 @@ actor MCPClient {
         guard !initialized else { return }
         let result = try await request(method: "initialize", params: [
             "protocolVersion": "2025-06-18", "capabilities": [:],
-            "clientInfo": ["name": "CoHearTranscribe", "version": "0.6.0"]
+            "clientInfo": ["name": "TalkTuck", "version": "0.6.0"]
         ])
         guard let version = result["protocolVersion"] as? String,
               ["2025-06-18", "2025-03-26"].contains(version) else {

@@ -93,7 +93,7 @@ def main():
     for path in sorted((source/"Sources").glob("*.swift")):
         text = path.read_text()
         inputs[str(path.relative_to(source))] = hashlib.sha256(path.read_bytes()).hexdigest()
-        if path.name == "CoHearTranscribeApp.swift": text = text.replace("@main\n", "")
+        if path.name == "TalkTuckApp.swift": text = text.replace("@main\n", "")
         (frozen/path.name).write_text(text)
     test_names = {name for _, name, _ in specs} - {"AgentCLIFixture", "LibrarySyncRemoteEditSmoke", "OfflineASR"}
     test_names.update(["MacRegressionFixtures", "OfflineLocalTranscriptionSmoke"])

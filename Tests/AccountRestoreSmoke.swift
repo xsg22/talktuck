@@ -2,7 +2,7 @@ import Foundation
 @main struct AccountRestoreSmoke {
     @MainActor static func main() async throws {
         let args = CommandLine.arguments
-        let suite = "cohear-account-smoke-" + UUID().uuidString
+        let suite = "talktuck-account-smoke-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let account = DingTalkAccountConnection(defaults: defaults, executable: URL(fileURLWithPath: args[1]))

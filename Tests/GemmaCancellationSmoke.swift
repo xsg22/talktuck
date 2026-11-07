@@ -2,7 +2,7 @@ import Foundation
 @main struct GemmaCancellationSmoke {
     static func main() async throws {
         let args = CommandLine.arguments
-        let suite = "cohear-gemma-cancel-" + UUID().uuidString
+        let suite = "talktuck-gemma-cancel-" + UUID().uuidString
         let defaults = UserDefaults(suiteName:suite)!
         defer { defaults.removePersistentDomain(forName:suite) }
         defaults.set("gemma-3-4b-it-q4", forKey:"optionalGemma.activeModel.v1")

@@ -44,7 +44,7 @@ final class BrowserAuthorizationCoordinator {
 
     @discardableResult static func receive(_ callback: URL) -> Bool {
         guard let active, active.continuation != nil,
-              callback.scheme == "coheartranscribe", callback.host == "oauth", callback.path == "/callback",
+              callback.scheme == "talktuck", callback.host == "oauth", callback.path == "/callback",
               let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems,
               items.first(where: { $0.name == "state" })?.value == active.expectedState else { return false }
         active.finish(.success(callback))

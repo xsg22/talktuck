@@ -9,10 +9,10 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 [[ -d /Applications/TalkTuck.app/Contents/Resources/Engine ]] || { print -u2 '需要已安装的 TalkTuck 引擎，仅用于本机预览。'; exit 1; }
 python3 - <<'PY'
 from pathlib import Path
-Path('.build/LibraryPreviewTypes.swift').write_text(Path('Sources/CoHearTranscribeApp.swift').read_text().replace('@main\n', ''))
+Path('.build/LibraryPreviewTypes.swift').write_text(Path('Sources/TalkTuckApp.swift').read_text().replace('@main\n', ''))
 PY
 sources=(Sources/*.swift)
-sources=(${sources:#Sources/CoHearTranscribeApp.swift})
+sources=(${sources:#Sources/TalkTuckApp.swift})
 xcrun swiftc -swift-version 5 -parse-as-library -target arm64-apple-macosx14.0 \
     $sources .build/LibraryPreviewTypes.swift Tests/LibraryManagementPreview.swift -o "$app/Contents/MacOS/TalkTuckPreview.new"
 mv "$app/Contents/MacOS/TalkTuckPreview.new" "$app/Contents/MacOS/TalkTuckPreview"

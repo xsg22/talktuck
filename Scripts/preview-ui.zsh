@@ -10,11 +10,11 @@ ditto Resources/Localization .build/TalkTuckAgentPreview.app/Contents/Resources/
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx14.0 Sources/AgentSchema.swift Sources/TalkTuckControl.swift Sources/AgentSetup.swift Native/AgentCLI/main.swift -o .build/TalkTuckAgentPreview.app/Contents/MacOS/talktuck
 python3 - <<'PY'
 from pathlib import Path
-source = Path('Sources/CoHearTranscribeApp.swift').read_text().replace('@main\n', '')
+source = Path('Sources/TalkTuckApp.swift').read_text().replace('@main\n', '')
 Path('.build/UIPreviewTypes.swift').write_text(source)
 PY
 sources=(Sources/*.swift)
-sources=(${sources:#Sources/CoHearTranscribeApp.swift})
+sources=(${sources:#Sources/TalkTuckApp.swift})
 xcrun swiftc -swift-version 5 -parse-as-library -target arm64-apple-macosx14.0 \
     $sources .build/UIPreviewTypes.swift Tests/UIPreview.swift \
     -o .build/TalkTuckAgentPreview.app/Contents/MacOS/TalkTuckPreview

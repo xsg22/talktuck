@@ -11,14 +11,14 @@ final class FeishuAccountConnection: ObservableObject {
     @Published private(set) var accountDisplay = ""
     @Published var error: String?
     private let executable: URL?
-    private let profile = "cohear-meetings"
+    private let profile = "talktuck-meetings"
     private var identity: String?
     private let pendingAccount: String
     private let readPendingCredential: () throws -> MCPCredential?
     @Published private(set) var hasPendingAuthorization = false
     @Published private(set) var pendingAuthorizationExpired = false
 
-    init(executable: URL? = Bundle.main.url(forResource: "lark-cli", withExtension: nil, subdirectory: "Integrations"), pendingAccount: String = "feishu-device-authorization.cohear-meetings", pendingCredentialReader: (() throws -> MCPCredential?)? = nil) {
+    init(executable: URL? = Bundle.main.url(forResource: "lark-cli", withExtension: nil, subdirectory: "Integrations"), pendingAccount: String = "feishu-device-authorization.talktuck-meetings", pendingCredentialReader: (() throws -> MCPCredential?)? = nil) {
         self.executable = executable
         self.pendingAccount = pendingAccount
         self.readPendingCredential = pendingCredentialReader ?? { try MCPKeychain.read(account: pendingAccount) }

@@ -468,7 +468,7 @@ struct MeetingCaptureTimeline {
 
 /// 所有写盘操作串行执行；tap 回调先复制 buffer，避免 AVAudioEngine 复用内存。
 final class MeetingAudioSink: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    let queue = DispatchQueue(label: "com.byering.cohear.meeting-audio", qos: .userInitiated)
+    let queue = DispatchQueue(label: "com.xsg.talktuck.meeting-audio", qos: .userInitiated)
     private let directory: URL
     private let onError: (Error) -> Void
     private let segmenter: ContinuousRecordingSegmenter?

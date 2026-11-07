@@ -4,7 +4,7 @@ import Foundation
     static func check(_ condition: Bool) { precondition(condition) }
     static func main() throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-agent-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-agent-" + UUID().uuidString)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
         let publicRoot = root.appendingPathComponent("AgentData")

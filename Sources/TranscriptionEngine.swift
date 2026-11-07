@@ -329,7 +329,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         return ["transcript token limit reached","memory limit","out of memory","failed to allocate"].contains{message.contains($0)}
     }
     func transcribe(audio: URL, model: URL, executable: URL, language: String, hotwords: [String] = [], context: String = "", offlineWindows: Bool = false, windowSeconds:Int? = nil, overlapSeconds:Int? = nil) throws -> TranscriptionOutput {
-        let directory = try temporaryDirectory(prefix: "CoHear-")
+        let directory = try temporaryDirectory(prefix: "TalkTuck-")
         defer { try? FileManager.default.removeItem(at: directory) }
         if offlineWindows { return try fixedWindowTranscribe(audio: audio, model: model, executable: executable, language: language, hotwords: hotwords, context: context, directory: directory, windowSeconds:windowSeconds ?? ASRWindowPolicy.load(language:language).offlineSeconds, overlapSeconds:overlapSeconds ?? ASRWindowPolicy.load().overlapSeconds) }
         let segmenter = executable.deletingLastPathComponent().appendingPathComponent("paraformer-live")
@@ -400,7 +400,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: sortformer.appendingPathComponent("model.safetensors").path) else {
             throw TranscriptionError.message("发言人模型缺失，请在设置中重新下载。正文已保存。")
         }
-        let directory = try temporaryDirectory(prefix: "CoHear-speakers-")
+        let directory = try temporaryDirectory(prefix: "TalkTuck-speakers-")
         defer { try? FileManager.default.removeItem(at: directory) }
         let turns = directory.appendingPathComponent("turns.json"), aligned = directory.appendingPathComponent("aligned.json")
         if let reader = try canonicalReader(for: audio) {

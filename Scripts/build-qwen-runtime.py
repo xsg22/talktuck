@@ -7,7 +7,14 @@ if sys.version_info[:2] != (3,12):raise SystemExit('构建Qwen隔离组件需要
 if not lock.exists():raise SystemExit('缺少已经验收的Qwen运行时依赖清单')
 if not python.exists():subprocess.run([sys.executable,'-m','venv',str(venv)],check=True)
 requirements_hash=hashlib.sha256(lock.read_bytes()).hexdigest()
-marker=venv/'.cohear-lock-sha256'
+marker=venv/'.talktuck-lock-sha256'
+if not marker.exists():
+    # Preserve a previously verified environment across a marker rename without
+    # deleting its cache or downloading its existing dependencies again.
+    for previous in venv.glob('.*-lock-sha256'):
+        if previous.is_file() and previous.read_text()==requirements_hash:
+            marker.write_text(requirements_hash)
+            break
 if not marker.exists() or marker.read_text()!=requirements_hash:
     subprocess.run([str(python),'-m','pip','install','--disable-pip-version-check','-r',str(lock)],check=True)
     marker.write_text(requirements_hash)

@@ -3,7 +3,7 @@ import Foundation
 /// App-owned operational events only. Never pass transcript, audio, credentials or request bodies.
 final class FeedbackDiagnostics: @unchecked Sendable {
     static let shared = FeedbackDiagnostics()
-    static let workers = FeedbackDiagnostics(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CoHearTranscribe/FeedbackWorkerDiagnostics", isDirectory: true))
+    static let workers = FeedbackDiagnostics(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TalkTuck/FeedbackWorkerDiagnostics", isDirectory: true))
     private let queue = DispatchQueue(label: "com.xsg.talktuck.feedback-diagnostics", qos: .utility)
     private let root: URL
     private let maximumBytes: UInt64
@@ -11,7 +11,7 @@ final class FeedbackDiagnostics: @unchecked Sendable {
     private var lastWriteError: Error?
 
     init(root: URL? = nil, maximumBytes: UInt64 = 5_000_000, archiveCount: Int = 4) {
-        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CoHearTranscribe", isDirectory: true).appendingPathComponent("FeedbackDiagnostics", isDirectory: true)
+        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TalkTuck", isDirectory: true).appendingPathComponent("FeedbackDiagnostics", isDirectory: true)
         self.maximumBytes = maximumBytes; self.archiveCount = max(1, archiveCount)
     }
 

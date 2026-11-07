@@ -8,7 +8,7 @@ import Foundation
         precondition(QuitActivity.resolve(recording: true, preparing: true, transcribing: false, externalTask: false) == .saving)
         precondition(QuitActivity.resolve(recording: false, preparing: false, transcribing: true, externalTask: true) == .external)
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-quit-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-quit-" + UUID().uuidString)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
         let record = MeetingRecord(title: "退出验收", text: "保留正文")

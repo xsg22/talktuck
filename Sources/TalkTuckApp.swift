@@ -41,7 +41,7 @@ private let feedbackDiagnosticLog = Logger(subsystem: Bundle.main.bundleIdentifi
 }
 
 @main
-struct CoHearTranscribeApp: App {
+struct TalkTuckApp: App {
     @ObservedObject private var appLanguage: AppLanguage
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var state: AppState

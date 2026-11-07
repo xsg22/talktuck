@@ -20,7 +20,7 @@ enum CLIError: LocalizedError {
     case message(String)
     var errorDescription: String? { if case let .message(message) = self { return message }; return nil }
 }
-let defaultAgentRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CoHearTranscribe/AgentData")
+let defaultAgentRoot = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TalkTuck/AgentData")
 let ownApplicationURL = AgentSetup.applicationURL(executable: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath())
 func setup(_ root: URL) -> AgentSetup { AgentSetup(appURL: ownApplicationURL, dataRoot: root) }
 func runtime(_ root: URL) throws -> Any {

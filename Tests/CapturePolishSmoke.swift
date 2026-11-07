@@ -16,7 +16,7 @@ import Foundation
     }
     @MainActor static func main() async throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-polish-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-polish-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let audio = root.appendingPathComponent("wave.caf")
@@ -50,7 +50,7 @@ import Foundation
         check(healthSink.lastFrame(for: .microphone) != nil, "真实静音帧应更新采集健康状态")
         _ = healthSink.finish()
         check(healthSink.level == 0, "静音电平真实为零")
-        let aliasRoot = URL(fileURLWithPath: "/private/tmp/cohear-alias-" + UUID().uuidString)
+        let aliasRoot = URL(fileURLWithPath: "/private/tmp/talktuck-alias-" + UUID().uuidString)
         defer { try? fm.removeItem(at: aliasRoot) }
         let aliasLibrary = try MeetingLibrary(root: aliasRoot)
         let aliasRecord = MeetingRecord(title: "系统路径别名")

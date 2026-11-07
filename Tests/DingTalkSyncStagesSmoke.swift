@@ -1,7 +1,7 @@
 import Foundation
 @main struct DingTalkSyncStagesSmoke {
     @MainActor static func main() async throws {
-        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("cohear-sync-stages-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("talktuck-sync-stages-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = root.appendingPathComponent("fixture")
@@ -22,7 +22,7 @@ esac
         let wrapped = script.replacingOccurrences(of: "printf '%s\\n' \"$1 $2\" >> calls", with: "printf '%s\\n' \"$1 $2\" >> '" + root.appendingPathComponent("calls").path + "'")
         try wrapped.write(to: fixture, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: fixture.path)
-        let suite = "cohear-stages-" + UUID().uuidString
+        let suite = "talktuck-stages-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let account = DingTalkAccountConnection(defaults: defaults, executable: fixture)

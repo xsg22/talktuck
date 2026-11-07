@@ -52,7 +52,7 @@ if rg '/opt/homebrew|/Users/' .build/engine-linkage.txt; then
     print -u2 '推理引擎依赖本机第三方动态库，不能独立分发'; exit 1
 fi
 # 全部构建和签名成功后才替换交付目录，失败不覆盖可用旧版。
-if [[ "${COHEAR_STAGE_ONLY:-0}" != "1" ]]; then
+if [[ "${TALKTUCK_STAGE_ONLY:-0}" != "1" ]]; then
     ditto "$app" "$root/dist/TalkTuck.app.new"
     [[ ! -d "$root/dist/TalkTuck.app" ]] || mv "$root/dist/TalkTuck.app" "$root/.build/previous-talktuck-$(date +%s).app"
     mv "$root/dist/TalkTuck.app.new" "$root/dist/TalkTuck.app"

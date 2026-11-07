@@ -12,7 +12,7 @@ enum MeetingAudioExport {
             if !originals.contains(source) { originals.append(source) }
         }
         let fm = FileManager.default
-        let temporary = parent.appendingPathComponent(".cohear-export-" + UUID().uuidString)
+        let temporary = parent.appendingPathComponent(".talktuck-export-" + UUID().uuidString)
         let destination = parent.appendingPathComponent("录音-" + recordingID.uuidString + "-" + UUID().uuidString)
         try fm.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: temporary) }

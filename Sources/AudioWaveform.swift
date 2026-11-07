@@ -16,7 +16,7 @@ actor AudioWaveformStore {
     private var recent: [String] = []
     init(directory: URL? = nil) {
         self.directory = directory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CoHearTranscribe/Waveforms-v1")
+            .appendingPathComponent("TalkTuck/Waveforms-v1")
     }
     private func identity(_ url: URL) throws -> String {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)

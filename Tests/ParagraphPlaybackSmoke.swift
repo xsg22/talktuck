@@ -4,7 +4,7 @@ import Foundation
 @main struct ParagraphPlaybackSmoke {
     @MainActor static func main() async throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-sentence-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-sentence-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let source = root.appendingPathComponent("silence.caf")

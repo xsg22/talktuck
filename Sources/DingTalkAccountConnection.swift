@@ -107,7 +107,7 @@ final class DingTalkAccountConnection: ObservableObject {
                 let auth = try await AccountCommandRunner.run(executable: executable,
                     arguments: ["auth", "status", "--profile", profile, "--format", "json"])
                 let args = try DingTalkSyncResult.notificationArguments(auth: auth, profile: profile, title: title,
-                    url: url, idempotencyKey: "cohear-doc-" + id)
+                    url: url, idempotencyKey: "talktuck-doc-" + id)
                 let sent = try await AccountCommandRunner.run(executable: executable, arguments: args)
                 notification = DingTalkSyncResult.notificationDescription(sent)
             } catch { notification = "提醒未发送或结果未确认；文档已保存，请勿重复同步。" }

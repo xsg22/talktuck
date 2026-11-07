@@ -48,7 +48,7 @@ actor GemmaRuntime {
     }
     private nonisolated static var defaultModelDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CoHearTranscribe/AuxiliaryModels", isDirectory: true)
+            .appendingPathComponent("TalkTuck/AuxiliaryModels", isDirectory: true)
     }
     nonisolated static func configurationAvailable() -> Bool {
         guard let id = UserDefaults.standard.string(forKey: "optionalGemma.activeModel.v1"),
@@ -163,7 +163,7 @@ actor GemmaRuntime {
         guard let executable, FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw OptionalModelError.message("安装包缺少Gemma推理引擎，请安装完整版本。")
         }
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CoHear-Gemma-" + UUID().uuidString)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TalkTuck-Gemma-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         workDirectory = directory
         let key = UUID().uuidString + UUID().uuidString

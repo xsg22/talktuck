@@ -3,7 +3,7 @@ import AVFoundation
 
 @main struct RecordingAppendSmoke {
     static func main() async throws {
-        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("cohear-append-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("talktuck-append-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
         let args = CommandLine.arguments

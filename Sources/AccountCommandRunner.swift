@@ -6,7 +6,7 @@ enum AccountCommandFailure: Error { case notConfigured }
 actor AccountCommandRunner {
     static func run(executable: URL, arguments: [String], input: Data? = nil, directory: URL? = nil, timeout: TimeInterval = 300) async throws -> [String: Any] {
         try await Task.detached(priority: .userInitiated) {
-            let root = FileManager.default.temporaryDirectory.appendingPathComponent("CoHear-account-" + UUID().uuidString)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("TalkTuck-account-" + UUID().uuidString)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: root) }
             let stdoutURL = root.appendingPathComponent("output"), stderrURL = root.appendingPathComponent("error")

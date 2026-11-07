@@ -2,7 +2,7 @@ import Foundation
 
 /// 权重下载到稳定的数据目录，升级 App 不重复下载。
 enum ASRResources {
-    static var root: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CoHearTranscribe/Models/ASR", isDirectory: true) }
+    static var root: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("TalkTuck/Models/ASR", isDirectory: true) }
     static var qwen: URL? { checked("Qwen3ASR", files: ["config.json", "model.safetensors", "vocab.json", "merges.txt"]) }
     static var sortformer: URL? { checked("Sortformer", files: ["config.json", "model.safetensors"]) }
     static var aligner: URL? { checked("QwenAligner", files: ["config.json", "model.safetensors", "vocab.json", "merges.txt"]) }

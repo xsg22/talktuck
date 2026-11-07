@@ -26,7 +26,7 @@ info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
 if info['CFBundleIdentifier'] != 'com.xsg.talktuck': parser.error('Use the actual production candidate bundle.')
 subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
 scratch = Path(tempfile.mkdtemp(prefix='talktuck-release-'+info['CFBundleShortVersionString']+'-'))
-home = scratch/'Home'; library = home/'Library/Application Support/CoHearTranscribe'
+home = scratch/'Home'; library = home/'Library/Application Support/TalkTuck'
 library.mkdir(parents=True)
 # APFS clone shares existing model blocks but isolates any verification metadata writes.
 subprocess.run(['cp','-cR',str(args.models.resolve(strict=True)),str(library/'Models')],check=True)

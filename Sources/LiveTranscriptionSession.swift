@@ -14,8 +14,8 @@ final class LiveTranscriptionSession: @unchecked Sendable {
     private let workerJournal: FeedbackDiagnostics
     init(workerJournal: FeedbackDiagnostics = .workers) { self.workerJournal = workerJournal }
     private let lock = NSLock()
-    private let writer = DispatchQueue(label: "com.byering.cohear.live-input", qos: .userInitiated)
-    private let reader = DispatchQueue(label: "com.byering.cohear.live-output", qos: .userInitiated)
+    private let writer = DispatchQueue(label: "com.xsg.talktuck.live-input", qos: .userInitiated)
+    private let reader = DispatchQueue(label: "com.xsg.talktuck.live-output", qos: .userInitiated)
     private var process: Process?
     private var input: FileHandle?
     private var output: FileHandle?
@@ -37,7 +37,7 @@ final class LiveTranscriptionSession: @unchecked Sendable {
         lock.lock()
         let alreadyStarted = process != nil || stopped
         lock.unlock()
-        guard !alreadyStarted else { throw NSError(domain: "CoHear.LiveSession", code: 1, userInfo: [NSLocalizedDescriptionKey: "实时识别会话已启动或结束，请创建新会话。"]) }
+        guard !alreadyStarted else { throw NSError(domain: "TalkTuck.LiveSession", code: 1, userInfo: [NSLocalizedDescriptionKey: "实时识别会话已启动或结束，请创建新会话。"]) }
         // 子进程退出时Foundation管道写应成为可处理的EPIPE，而不是终止录音应用。
         signal(SIGPIPE, SIG_IGN)
         let safeWords = Self.supportedHotwords(hotwords)

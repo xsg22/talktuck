@@ -4,7 +4,7 @@ import Foundation
 struct LibrarySmoke {
     static func main() throws {
         let fm = FileManager.default
-        let temp = fm.temporaryDirectory.appendingPathComponent("CoHear-Library-Test-" + UUID().uuidString)
+        let temp = fm.temporaryDirectory.appendingPathComponent("TalkTuck-Library-Test-" + UUID().uuidString)
         try fm.createDirectory(at: temp, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: temp) }
         let oldID = UUID()

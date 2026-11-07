@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
-sources=[str(p) for p in Path('Sources').glob('*.swift') if p.name!='CoHearTranscribeApp.swift']
-app=Path('Sources/CoHearTranscribeApp.swift').read_text().replace('@main\n','')
+sources=[str(p) for p in Path('Sources').glob('*.swift') if p.name!='TalkTuckApp.swift']
+app=Path('Sources/TalkTuckApp.swift').read_text().replace('@main\n','')
 Path('.build/TestAppTypes.swift').write_text(app)
 tests=['AgentDataSmoke','LibrarySmoke','AppStateSmoke','SpeakerEditingSmoke','MeetingWorkspacePersistenceSmoke','QuitFlowSmoke','RecorderSmoke','CapturePolishSmoke','ParagraphPlaybackSmoke','RecordingProfileSmoke','MiniRecordingSmoke','ContinuousRecordingSmoke','LiveAudioSmoke','LiveSourceSwitchSmoke','RecordingBrowsingSmoke','ASRModelDownloadSmoke']
 texts=[]

@@ -2,7 +2,7 @@ import Foundation
 
 enum TranscriptionError: LocalizedError { case message(String) }
 enum ASRResources {
-    static var root: URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("CoHearTranscribe/Models/ASR") }
+    static var root: URL { FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("TalkTuck/Models/ASR") }
     static func executable(_ name: String) -> URL? {
         let url = Bundle.main.resourceURL?.appendingPathComponent("Engine/ASR/"+name)
         return url.flatMap { FileManager.default.isExecutableFile(atPath:$0.path) ? $0 : nil }

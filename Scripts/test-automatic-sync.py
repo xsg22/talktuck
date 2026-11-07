@@ -17,7 +17,7 @@ node=a.node.resolve();env['PATH']=str(node.parent)+os.pathsep+env['PATH']
 def call(cmd,label,cwd=mac,timeout=600):
  with (run/'artifacts'/label).open('w') as out:subprocess.run([str(x) for x in cmd],cwd=cwd,env=env,stdout=out,stderr=subprocess.STDOUT,check=True,timeout=timeout)
 for f in (mac/'Sources').glob('*.swift'):(run/'sources'/f.name).write_bytes(f.read_bytes())
-f=run/'sources/CoHearTranscribeApp.swift';f.write_text(f.read_text().replace('@main\n',''))
+f=run/'sources/TalkTuckApp.swift';f.write_text(f.read_text().replace('@main\n',''))
 base=['xcrun','swiftc','-swift-version','5','-parse-as-library','-target','arm64-apple-macosx14.0','-module-cache-path',run/'cache/swift',*sorted((run/'sources').glob('*.swift'))]
 call(base+[mac/'Tests/LibraryAutomaticSyncSmoke.swift','-o',run/'build/mac-auto'],'mac-compile.log')
 call(base+[mac/'Tests/TalkTuckAccountSmoke.swift','-o',run/'build/mac-account'],'account-compile.log')

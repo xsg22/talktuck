@@ -11,9 +11,9 @@ tests = [
     ('FeishuAuthorizationRecoverySmoke', True), ('OptionalModelSmoke', True),
     ('OptionalModelFallbackSmoke', True), ('IntelligenceSmoke', True),
 ]
-sources = sorted(str(p) for p in (ROOT / 'Sources').glob('*.swift') if p.name != 'CoHearTranscribeApp.swift')
+sources = sorted(str(p) for p in (ROOT / 'Sources').glob('*.swift') if p.name != 'TalkTuckApp.swift')
 app_types = BUILD / 'UIContractAppTypes.swift'
-app_types.write_text((ROOT / 'Sources/CoHearTranscribeApp.swift').read_text().replace('@main\n', ''))
+app_types.write_text((ROOT / 'Sources/TalkTuckApp.swift').read_text().replace('@main\n', ''))
 runner = BUILD / 'UIContractRegression.swift'
 parts = [(ROOT / 'Tests' / (name + '.swift')).read_text().replace('@main', '') for name, _ in tests]
 parts.append('@main struct UIContractRegression { @MainActor static func main() async throws { ' + '; '.join(

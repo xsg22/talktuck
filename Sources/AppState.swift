@@ -230,7 +230,7 @@ final class AppState: ObservableObject {
         self.cloudAccount = cloudAccount ?? TalkTuckAccountStore()
         self.recorder = recorder ?? MeetingRecorder()
         storage = storageURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CoHearTranscribe", isDirectory: true)
+            .appendingPathComponent("TalkTuck", isDirectory: true)
         liveCacheBaseURL = storageURL
         let personalHotwords = PersonalHotwords(root: storage)
         hotwords = personalHotwords

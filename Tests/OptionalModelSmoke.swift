@@ -3,10 +3,10 @@ import Foundation
 
 @main struct OptionalModelSmoke {
     @MainActor static func main() async throws {
-        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("cohear-optional-model-test-" + UUID().uuidString)
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("talktuck-optional-model-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let defaultsName = "cohear-optional-model-" + UUID().uuidString
+        let defaultsName = "talktuck-optional-model-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: defaultsName)!
         defer { defaults.removePersistentDomain(forName: defaultsName) }
         let spec = OptionalModelSpec.all[0]

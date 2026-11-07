@@ -33,7 +33,7 @@ private final class MCPOAuthNoRedirectDelegate: NSObject, URLSessionTaskDelegate
 
 /// OAuth credentials never enter preferences, transcript files, logs, or subprocess arguments.
 enum MCPKeychain {
-    static let service = "com.cohear.transcribe.personal-mcp"
+    static let service = "com.xsg.talktuck.personal-mcp"
     static func read(account: String) throws -> MCPCredential? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                    kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
@@ -74,7 +74,7 @@ final class MCPConnectionStore: NSObject, ObservableObject {
     private let namespace: String
     private var connectedEndpoint: String?
     private static let preferenceKey = "personalMCPConfiguration.v1"
-    static let redirectURI = "coheartranscribe://oauth/callback"
+    static let redirectURI = "talktuck://oauth/callback"
 
     init(defaults: UserDefaults = .standard, namespace: String = "default") {
         self.defaults = defaults
@@ -196,7 +196,7 @@ final class MCPConnectionStore: NSObject, ObservableObject {
             authURL.queryItems = items
             let callback = try await browserAuthorize(authURL.url!)
             let callbackItems = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            guard callback.scheme == "coheartranscribe", callback.host == "oauth", callback.path == "/callback",
+            guard callback.scheme == "talktuck", callback.host == "oauth", callback.path == "/callback",
                   callbackItems.first(where: { $0.name == "state" })?.value == state else { throw MCPError.message("OAuth 回调校验失败。") }
             guard let code = callbackItems.first(where: { $0.name == "code" })?.value else { throw MCPError.message("授权被取消或服务未返回授权码。") }
             var tokenRequest = URLRequest(url: try secureURL(tokenEndpoint))

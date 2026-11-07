@@ -18,7 +18,7 @@ def download(f):
   if path.exists() and path.stat().st_size==end-start+1:return
   for attempt in range(8):
    try:
-    req=urllib.request.Request(f['url']+'?cohear_range='+str(i),headers={'Range':f'bytes={start}-{end}'})
+    req=urllib.request.Request(f['url']+'?talktuck_range='+str(i),headers={'Range':f'bytes={start}-{end}'})
     with OPENER.open(req,timeout=35) as r:
      if r.status==206:
       assert r.headers.get('Content-Range')==f"bytes {start}-{end}/{f['bytes']}"
@@ -42,7 +42,7 @@ def download(f):
     while c:=src.read(1048576):out.write(c)
  assert tmp.stat().st_size==f['bytes'] and digest(tmp)==f['sha256'],'SHA256 mismatch '+str(p)
  tmp.replace(p);print('verified',f['path'],flush=True)
- if os.environ.get('COHEAR_KEEP_DOWNLOAD_PARTS')!='1':
+ if os.environ.get('TALKTUCK_KEEP_DOWNLOAD_PARTS')!='1':
   for q in parts.iterdir():q.unlink()
   parts.rmdir()
 

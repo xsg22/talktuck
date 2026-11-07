@@ -20,7 +20,7 @@ import AVFoundation
         defer { sync.disconnect();audio.disconnect() }
         if mode == "seed" {
             let source = root.appendingPathComponent("mac-speech.wav"),before = try LibraryAudioFiles.digest(source)
-            let model = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("CoHearTranscribe/Models/ASR/Qwen3ASR")
+            let model = FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("TalkTuck/Models/ASR/Qwen3ASR")
             let runtime = URL(fileURLWithPath:"/Applications/TalkTuck.app/Contents/Resources/Engine/ASR/qwen-asr")
             let began = Date(),result = try await Task.detached { try TranscriptionEngine().transcribe(audio:source,model:model,executable:runtime,language:"zh") }.value
             precondition(!result.text.isEmpty && result.text.range(of:"[\\p{Han}]",options:.regularExpression) != nil,"Actual local decoder must produce Chinese text")

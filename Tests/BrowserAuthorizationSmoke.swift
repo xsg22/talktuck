@@ -8,8 +8,8 @@ import Foundation
         await Task.yield()
         precondition(opened.count == 1)
         precondition(flow.reopen() && opened.count == 2 && opened[0] == opened[1])
-        precondition(!BrowserAuthorizationCoordinator.receive(URL(string: "coheartranscribe://oauth/callback?state=wrong&code=x")!))
-        let callback = URL(string: "coheartranscribe://oauth/callback?state=test-state&code=ok")!
+        precondition(!BrowserAuthorizationCoordinator.receive(URL(string: "talktuck://oauth/callback?state=wrong&code=x")!))
+        let callback = URL(string: "talktuck://oauth/callback?state=test-state&code=ok")!
         precondition(BrowserAuthorizationCoordinator.receive(callback))
         let result = try await pending.value
         precondition(result == callback && !flow.reopen())

@@ -10,7 +10,7 @@ import Foundation
         check(RecordingProfile.backgroundRealtime.compact(windowVisible: true, expanded: false), "后台模式默认精简")
         check(!RecordingProfile.backgroundRealtime.compact(windowVisible: true, expanded: true), "主动展开实时正文")
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-profile-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-profile-" + UUID().uuidString)
         defer { try? fm.removeItem(at: root) }
         let library = try MeetingLibrary(root: root)
         let record = MeetingRecord(title: "后台实时验收", status: .recording)

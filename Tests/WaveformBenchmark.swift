@@ -6,7 +6,7 @@ import Foundation
 @main struct WaveformBenchmark {
     static func main() async throws {
         let fm = FileManager.default
-        let root = fm.temporaryDirectory.appendingPathComponent("cohear-wave-bench-" + UUID().uuidString)
+        let root = fm.temporaryDirectory.appendingPathComponent("talktuck-wave-bench-" + UUID().uuidString)
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: root) }
         let audio = root.appendingPathComponent("ten-minutes.caf")
