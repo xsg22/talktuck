@@ -11,6 +11,8 @@ struct LiveTranscriptEvent: Decodable, Sendable {
 /// 管道写入与模型推理都在独立队列/进程，不阻塞录音队列或主线程。
 final class LiveTranscriptionSession: @unchecked Sendable {
     var onEvent: ((LiveTranscriptEvent) -> Void)?
+    private let workerJournal: FeedbackDiagnostics
+    init(workerJournal: FeedbackDiagnostics = .workers) { self.workerJournal = workerJournal }
     private let lock = NSLock()
     private let writer = DispatchQueue(label: "com.byering.cohear.live-input", qos: .userInitiated)
     private let reader = DispatchQueue(label: "com.byering.cohear.live-output", qos: .userInitiated)
@@ -24,6 +26,7 @@ final class LiveTranscriptionSession: @unchecked Sendable {
     private var completions: [CheckedContinuation<Void, Never>] = []
     private var directory: URL?
     private var log: FileHandle?
+    private var workerLog: WorkerLogCapture?
 
     static func supportedHotwords(_ words: [String]) -> [String] {
         let allowed = CharacterSet.letters.union(.decimalDigits).union(.whitespaces)
@@ -47,6 +50,8 @@ final class LiveTranscriptionSession: @unchecked Sendable {
         let logURL = directory.appendingPathComponent("engine.log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         log = try FileHandle(forWritingTo: logURL)
+        let workerLog = WorkerLogCapture(mirror: log!, stage: "live-transcription", journal: workerJournal)
+        self.workerLog = workerLog
         let incoming = Pipe(), outgoing = Pipe()
         let child = Process()
         child.executableURL = executable
@@ -61,7 +66,7 @@ final class LiveTranscriptionSession: @unchecked Sendable {
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: wordsFile.path)
             child.arguments = ["xasr", hotwordModel.path, language, model.appendingPathComponent("silero_vad.onnx").path, wordsFile.path]
         } else { child.arguments = [model.path, language] }
-        child.standardInput = incoming; child.standardOutput = outgoing; child.standardError = log
+        child.standardInput = incoming; child.standardOutput = outgoing; child.standardError = workerLog.pipe
         var environment = ProcessInfo.processInfo.environment
         environment["TALKTUCK_INFERENCE_LOCK"] = InferenceGate.coordinationPath
         if language == "yue" { environment["TALKTUCK_ASR_MEMORY_MB"] = "3072" }
@@ -70,8 +75,8 @@ final class LiveTranscriptionSession: @unchecked Sendable {
         child.terminationHandler = { [weak self] child in
             self?.reader.async { [weak self] in self?.complete(status: child.terminationStatus) }
         }
-        do { try child.run() }
-        catch { complete(status: 1); throw error }
+        do { try child.run(); workerLog.start() }
+        catch { workerLog.start(); complete(status: 1); throw error }
         // 仅子进程持有读端/写端，保证退出和EOF能被对端识别。
         try? incoming.fileHandleForReading.close()
         try? outgoing.fileHandleForWriting.close()
@@ -161,6 +166,7 @@ final class LiveTranscriptionSession: @unchecked Sendable {
             onEvent?(LiveTranscriptEvent(type: "error", text: "实时引擎已退出；完整录音仍可转录", start: 0, end: 0))
         }
         writer.async { [weak self] in try? self?.input?.close() }
+        if workerLog?.waitForDrain() == false { workerJournal.record("worker-output", "drain-timeout", fields: ["stage": "live-transcription"]) }
         try? log?.close()
         if let directory { try? FileManager.default.removeItem(at: directory) }
         waiters.forEach { $0.resume() }

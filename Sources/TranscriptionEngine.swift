@@ -59,6 +59,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let log = try FileHandle(forWritingTo: logURL)
         defer { try? log.close() }
+        let outputCapture = WorkerLogCapture(mirror: log, stage: stage)
         let child = Process()
         child.executableURL = executable
         child.arguments = arguments
@@ -67,8 +68,8 @@ final class TranscriptionEngine: @unchecked Sendable {
         environment["TALKTUCK_INFERENCE_LOCK"] = InferenceGate.coordinationPath
         if let memoryLimitMB { environment["TALKTUCK_ASR_MEMORY_MB"] = String(memoryLimitMB) }
         child.environment = environment
-        child.standardOutput = log
-        child.standardError = log
+        child.standardOutput = outputCapture.pipe
+        child.standardError = outputCapture.pipe
         lock.lock()
         if cancelled { lock.unlock(); throw CancellationError() }
         process = child
@@ -77,8 +78,10 @@ final class TranscriptionEngine: @unchecked Sendable {
             FeedbackDiagnostics.shared.record("transcription-engine", "launch-failed", fields: ["stage": stage, "domain": diagnostic.domain, "code": diagnostic.code])
             process = nil; lock.unlock(); throw error
         }
+        outputCapture.start()
         lock.unlock()
         child.waitUntilExit()
+        if !outputCapture.waitForDrain() { FeedbackDiagnostics.workers.record("worker-output", "drain-timeout", fields: ["stage": stage]) }
         FeedbackDiagnostics.shared.record("transcription-engine", "stage-exit", fields: ["stage": stage, "status": child.terminationStatus])
         if child.terminationStatus != 0 { try? captureEvidence(logURL,name:"worker-failure-"+logURL.lastPathComponent) }
         lock.lock()
@@ -102,6 +105,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         let logURL = directory.appendingPathComponent(UUID().uuidString + ".log")
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         let log = try FileHandle(forWritingTo: logURL); defer { try? log.close() }
+        let outputCapture = WorkerLogCapture(mirror: log, stage: stage)
         var sockets: [Int32] = [-1, -1]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockets) == 0 else { throw TranscriptionError.message("无法建立音频流。") }
         let output = FileHandle(fileDescriptor: sockets[0], closeOnDealloc: true)
@@ -116,7 +120,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         environment["TALKTUCK_INFERENCE_LOCK"] = InferenceGate.coordinationPath
         if let memoryLimitMB { environment["TALKTUCK_ASR_MEMORY_MB"] = String(memoryLimitMB) }
         child.environment = environment
-        child.standardInput = input; child.standardOutput = log; child.standardError = log
+        child.standardInput = input; child.standardOutput = outputCapture.pipe; child.standardError = outputCapture.pipe
         lock.lock()
         if cancelled { lock.unlock(); throw CancellationError() }
         process = child
@@ -125,11 +129,13 @@ final class TranscriptionEngine: @unchecked Sendable {
             FeedbackDiagnostics.shared.record("transcription-engine", "launch-failed", fields: ["stage": stage, "domain": diagnostic.domain, "code": diagnostic.code])
             process = nil; lock.unlock(); throw error
         }
+        outputCapture.start()
         lock.unlock(); try? input.close()
         var feedError: Error?
         do { try feed(output); try output.close() }
         catch { feedError = error; try? output.close(); if child.isRunning { child.terminate() } }
         child.waitUntilExit()
+        if !outputCapture.waitForDrain() { FeedbackDiagnostics.workers.record("worker-output", "drain-timeout", fields: ["stage": stage]) }
         FeedbackDiagnostics.shared.record("transcription-engine", "stage-exit", fields: ["stage": stage, "status": child.terminationStatus])
         if child.terminationStatus != 0 { try? captureEvidence(logURL,name:"worker-failure-"+logURL.lastPathComponent) }
         lock.lock(); process = nil; let wasCancelled = cancelled; lock.unlock()

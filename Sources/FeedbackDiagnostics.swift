@@ -3,6 +3,7 @@ import Foundation
 /// App-owned operational events only. Never pass transcript, audio, credentials or request bodies.
 final class FeedbackDiagnostics: @unchecked Sendable {
     static let shared = FeedbackDiagnostics()
+    static let workers = FeedbackDiagnostics(root: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CoHearTranscribe/FeedbackWorkerDiagnostics", isDirectory: true))
     private let queue = DispatchQueue(label: "com.xsg.talktuck.feedback-diagnostics", qos: .utility)
     private let root: URL
     private let maximumBytes: UInt64
