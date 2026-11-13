@@ -20,11 +20,32 @@ struct RecordingCanvasView: View {
                     .padding(.top, 22).help(L10n.text("录音状态也可从菜单栏查看，随时暂停或停止。"))
                 Spacer(minLength: 0)
             } else {
+                if let summary = state.current?.summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    DisclosureGroup(L10n.text("摘要")) {
+                        ScrollView {
+                            Text(Self.readableSummary(summary)).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }.frame(maxHeight: 180)
+                    }.padding(12).background(TalkTuckTheme.quiet, in: RoundedRectangle(cornerRadius: 10))
+                }
                 TranscriptTimelineView(state: state).frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(TalkTuckTheme.surface, in: RoundedRectangle(cornerRadius: 12))
             }
 
         }
+    }
+
+    private static func readableSummary(_ value: String) -> String {
+        guard value.range(of: #"(?i)<(?:p|div|h[1-6]|ul|li|br)\b"#, options: .regularExpression) != nil else { return value }
+        return value.replacingOccurrences(of: #"(?i)<br\s*/?>|</(?:p|div|h[1-6]|li)>"#, with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: #"<[^>]*>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 struct RecordingDeliveryView: View {

@@ -35,20 +35,18 @@ CORE = [
     ("organization", "OrganizationSmoke", False), ("recording-domain", "RecordingDomainSmoke", False),
     ("mini", "MiniRecordingSmoke", True), ("recording-browsing", "RecordingBrowsingSmoke", True),
     ("capture-polish", "CapturePolishSmoke", True), ("live-recording", "LiveRecordingSmoke", False),
-    ("cold-start", "AgentColdStartSmoke", True),
+    ("cold-start", "AgentColdStartSmoke", True), ("lan-import", "LANImportSmoke", True),
 ]
 EXTRA = [
     ("progressive-real", "ProgressiveRealPipelineSmoke", True),
     ("cli-fixture", "AgentCLIFixture", False), ("account", "TalkTuckAccountSmoke", True),
-    ("automatic-sync", "LibraryAutomaticSyncSmoke", True), ("text-sync", "LibrarySyncSmoke", True),
-    ("remote-edit", "LibrarySyncRemoteEditSmoke", True), ("audio-retry", "LibraryAudioSmoke", True),
     ("hotword-sync", "HotwordSyncE2E", True), ("offline-asr", "OfflineASR", False),
     ("format-asr", "RecordingFormatSmoke", True), ("append-asr", "RecordingAppendSmoke", True),
     ("canonical-capture", "MacCanonicalCaptureSmoke", True), ("canonical-long", "MacCanonicalLongCaptureSmoke", True),
     ("segmented-manifest", "MacSegmentedManifestSmoke", False), ("segmented-track", "MacSegmentedTrackSmoke", False),
     ("canonical-player", "MeetingAudioPlayerSmoke", True), ("canonical-transcription", "CanonicalTranscriptionSmoke", False),
     ("offline-windows", "OfflineWindowSmoke", False), ("canonical-windows", "CanonicalOfflineWindowSmoke", False),
-    ("window-speakers", "OfflineWindowSpeakerSmoke", False), ("canonical-sync", "CanonicalAudioSyncSmoke", True),
+    ("window-speakers", "OfflineWindowSpeakerSmoke", False),
     ("canonical-real-asr", "CanonicalRealASRSmoke", False), ("existing-archives", "ExistingArchiveReadSmoke", True), ("long-windows", "ASRLongWindowSmoke", False), ("profile-long-windows", "ASRProfileLongWindowSmoke", False), ("real-window-pipeline", "ASRWindowRealPipelineSmoke", False), ("live-long-utterance", "LivePreviewLongUtteranceSmoke", False), ("live-cache", "LiveRefinementCacheSmoke", False),
 ]
 
@@ -70,7 +68,8 @@ def main():
     env = dict(os.environ, TMPDIR=str(run/"tmp")+"/", XDG_CACHE_HOME=str(run/"cache"),
                SWIFT_USE_OLD_DRIVER="1", PYTHONDONTWRITEBYTECODE="1", RECORD_AI_TRANSCRIPTION_TMP_ROOT=str(run/"tmp"), NODE_COMPILE_CACHE=str(run/"cache/node"),
                CLANG_MODULE_CACHE_PATH=str(run/"cache/clang"), SWIFT_MODULECACHE_PATH=str(run/"cache/swift"),
-               HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HOME=str(run/"cache/huggingface"))
+               HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HOME=str(run/"cache/huggingface"),
+               LAN_SYNC_TEST_ROOT=str(run/"tmp"))
     if args.node: env["PATH"] = str(args.node.resolve().parent)+os.pathsep+env["PATH"]
     results = []
     def call(case, command, *, cwd=source, extra=None, timeout=180, required=False):
@@ -96,7 +95,7 @@ def main():
         inputs[str(path.relative_to(source))] = hashlib.sha256(path.read_bytes()).hexdigest()
         if path.name == "TalkTuckApp.swift": text = text.replace("@main\n", "")
         (frozen/path.name).write_text(text)
-    test_names = {name for _, name, _ in specs} - {"AgentCLIFixture", "LibrarySyncRemoteEditSmoke", "OfflineASR"}
+    test_names = {name for _, name, _ in specs} - {"AgentCLIFixture", "OfflineASR"}
     test_names.update(["MacRegressionFixtures", "OfflineLocalTranscriptionSmoke"])
     for name in sorted(test_names):
         path = source/"Tests"/(name+".swift")
@@ -113,7 +112,7 @@ def main():
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
     canonical_cases = ["canonical-capture","canonical-long","segmented-manifest","segmented-track","canonical-player","canonical-transcription","offline-windows","canonical-windows","window-speakers", "long-windows", "profile-long-windows", "live-long-utterance", "live-cache"]
     plan = ["compile"]+canonical_cases+[x[0] for x in CORE]+["cli-compile", "cli-fixture", "cli-mcp", "group-cli", "localization-catalog", "agent-setup", "speaker-fragments", "sentence-speakers", "multilingual-native", "speaker-timeline", "language-policy", "inference-policy", "alignment-windows", "alignment-context", "repeat-recovery", "reporting"]
-    if args.server_repo and args.node: plan += ["server-typecheck", "server-contracts", "account", "automatic-sync", "text-offline-seed", "remote-edit", "text-conflict-resolve", "audio-retry", "hotword-sync", "canonical-sync"]
+    if args.server_repo and args.node: plan += ["server-typecheck", "server-contracts", "account", "hotword-sync"]
     if args.engine_dir and args.model_root: plan += ["synthesize", "convert", "offline-asr", "format-asr", "append-asr", "synthesize-cantonese", "convert-cantonese", "live-cantonese", "synthesize-english", "english-final-speakers", "canonical-real-asr", "quiet-real-asr"]
     (run/"readiness.json").write_text(json.dumps(dict(commit=commit, inputs=inputs, cases=plan, compiledEntrypoints=[x[0] for x in specs],
         backend="isolated loopback, in-memory SQLite, fake SMS" if args.server_repo else "not selected",
@@ -128,7 +127,11 @@ def main():
         results.append(dict(checked,reusedFrom=str(prior),allInputHashesVerified=True))
         print("compile: PASS (all source and test input hashes match prior run)",flush=True)
     else:
-        call("compile", compiler+sorted(frozen.glob("*.swift"))+["-o", executable], timeout=600, required=True)
+        # Swift's driver on this host cannot use the external-volume TMPDIR.
+        # Only compiler scratch falls back to the system temporary directory;
+        # all build output, fixtures, logs and configurable caches stay in run.
+        call("compile", compiler+sorted(frozen.glob("*.swift"))+["-o", executable], timeout=600, required=True,
+             extra={"TMPDIR": os.environ.get("TMPDIR", "/private/tmp/")})
     def swift(case, *arguments, label=None, network=False, **extra):
         command = [executable, *arguments]
         if not network: command = ["/usr/bin/sandbox-exec", "-p", "(version 1)(allow default)(deny network*)", *command]
@@ -164,7 +167,8 @@ def main():
         swift(case,*arguments)
     cli = run/"build/talktuck"
     cli_compiler = [x for x in compiler if x != "-parse-as-library"]
-    call("cli-compile", cli_compiler+[source/"Sources/AgentSchema.swift", source/"Sources/TalkTuckControl.swift", source/"Sources/AgentSetup.swift", source/"Native/AgentCLI/main.swift", "-o", cli], required=True)
+    call("cli-compile", cli_compiler+[source/"Sources/AgentSchema.swift", source/"Sources/TalkTuckControl.swift", source/"Sources/AgentSetup.swift", source/"Native/AgentCLI/main.swift", "-o", cli], required=True,
+         extra={"TMPDIR": os.environ.get("TMPDIR", "/private/tmp/")})
     if swift("cli-fixture", run/"fixtures/cli"):
         call("cli-mcp", [sys.executable, source/"Tests/AgentCLIIntegration.py", cli, run/"fixtures/cli"])
     if (run/"fixtures/organization-agent").exists(): call("group-cli", [sys.executable, source/"Tests/OrganizationCLIIntegration.py", cli, run/"fixtures/organization-agent"])
@@ -195,11 +199,6 @@ def main():
         call("server-contracts", [args.node, "node_modules/tsx/dist/cli.mjs", "--test", "test/library-sync.test.ts", "test/library-audio.test.ts", "test/mac-account.test.ts"], cwd=server)
         with fixture("test/support/mac-account-server.ts", "library", audio=True) as endpoint:
             swift("account", endpoint, network=True)
-            swift("automatic-sync", endpoint, run/"fixtures/automatic-sync", network=True)
-            swift("canonical-sync", endpoint, run/"fixtures/canonical-sync", network=True)
-            if swift("text-sync", "seed", run/"fixtures/text-sync", endpoint, label="text-offline-seed", network=True):
-                if swift("remote-edit", endpoint, network=True): swift("text-sync", "finish", run/"fixtures/text-sync", endpoint, label="text-conflict-resolve", network=True)
-            swift("audio-retry", "seed", run/"fixtures/audio-retry", endpoint, network=True)
         with fixture("test/support/hotword-e2e-server.ts", "hotwords") as endpoint:
             swift("hotword-sync", endpoint, network=True)
     if args.engine_dir and args.model_root:

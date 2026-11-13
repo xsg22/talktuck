@@ -11,7 +11,7 @@ struct TalkTuckAccountPanel: View {
             Label("TalkTuck", systemImage: "person.crop.circle").font(AppTypography.heading)
             if store.isSignedIn {
                 Text(L10n.text("已登录") + (store.displayName.isEmpty ? "" : " · " + store.displayName))
-                Text(L10n.text(store.librarySyncAvailable ? "登录后默认同步全部录音、转录和分组，可在同步设置中暂停。" : "跨设备同步正在准备中，录音继续保存在本机。"))
+                Text(L10n.text("录音保存在本机；可在 iPhone 同步中接收录音。"))
                     .font(AppTypography.secondary).foregroundStyle(.secondary)
                 Button(L10n.text("退出登录")) { store.signOut(); phone = ""; code = "" }
             } else {

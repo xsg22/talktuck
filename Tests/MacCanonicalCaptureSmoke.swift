@@ -215,33 +215,8 @@ import AVFoundation
         precondition(localRange.startFrame == 0 && localRange.endFrame == 8000 && localRange.sourceRecordingID == nextID)
         print("PASS: actual AppState continuous crash recovery retains closed chapter, adds only uncovered tail, excludes full-source ASR, preserves edits; repeat recovery is idempotent")
         print("PASS: continued capture preserves durable queue and global chapter offsets without reindexing original AAC")
-        let userID = UUID(); library.activeSyncUserId = userID
-        func enrollFixture(_ value: MeetingRecord) throws -> MeetingRecord {
-            var item = value; item.userId = userID; item.pendingAudioFiles = []; item.status = .completed
-            item.syncContent = LibrarySyncRecording(id: item.id, title: item.title, createdAt: LibrarySyncCodec.date(item.created),
-                durationMs: LibrarySyncCodec.milliseconds(item.duration), source: item.source.rawValue, language: item.language,
-                isStarred: false, groupId: nil, speakers: [], paragraphs: [])
-            return try library.save(item)
-        }
-        _ = try enrollFixture(library.load(record.id))
-        let cloudAdapter = MacLibraryAudioAdapter(library: library)
-        let canonicalSources = try await cloudAdapter.sources(record.id, userId:userID)
-        precondition(canonicalSources.count == 2 && canonicalSources.allSatisfy { $0.url.pathExtension == "m4a" })
-        precondition(canonicalSources.map(\.durationMs) == [2500,1000] && canonicalSources.map(\.timelineStartMs) == [0,2500])
-        let canonicalAudio = try AVAudioFile(forReading:canonicalSources[0].url)
-        precondition(canonicalAudio.length == 40_000)
         for (url,hash) in hashes { let current = try BalancedAudioIO.hashFile(url).1; precondition(current == hash) }
         let preservedArchive = try library.load(record.id); precondition(preservedArchive.audioFiles.first?.hasSuffix(".aacarchive") == true)
-        var legacyCloud = MeetingRecord(title: "Legacy cloud fixture", text: "", status: .completed)
-        _ = try library.importAudio(exported[0], into: &legacyCloud, recordingDuration: 2.5)
-        legacyCloud = try enrollFixture(legacyCloud)
-        let legacySources = try await cloudAdapter.sources(legacyCloud.id, userId: userID)
-        precondition(legacySources.count == 1 && legacySources[0].durationMs == 2500)
-        let parts = try legacySources.map { try LibraryAudioFiles.describe($0, recordingId: legacyCloud.id) }
-        try LibraryAudioFiles.validate(LibraryAudioManifest(recordingId: legacyCloud.id, version: 1, parts: parts), id: legacyCloud.id)
-        let legacyHash = try BalancedAudioIO.hashFile(exported[0]).1
-        precondition(parts[0].sha256 == legacyHash)
-        print("PASS: canonical cloud sources are verified complete M4A; original archive references and AAC hashes retained; legacy sources remain valid")
         print("PASS: production sink:48k stereo/system +16k mic, pause/resume/mute,40000 exact frames, no mixed master")
         print("PASS: actual library registers canonical archive in place, survives reopen, deduplicates registration, preserves edits and AAC hashes")
         print("PASS: actual canonical waveform, explicit compatible export and interrupted-capture recovery registration")
