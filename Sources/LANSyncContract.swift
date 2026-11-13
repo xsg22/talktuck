@@ -3,12 +3,18 @@ import CryptoKit
 
 // Versioned independently from either app's persisted recording model.
 // File paths on the receiving device are constructed locally from these components.
+struct LANSyncSpeaker: Codable, Equatable {
+    let id: UUID
+    let name: String
+}
 struct LANSyncParagraph: Codable, Equatable {
     var id: UUID = UUID()
     let text: String
     let startMs: Int?
     let endMs: Int?
     let speaker: String?
+    var separator: String? = nil
+    var speakers: [LANSyncSpeaker] = []
 }
 
 struct LANSyncFile: Codable, Equatable {
@@ -55,6 +61,9 @@ struct LANSyncRecord: Codable, Equatable {
         guard Self.safeComponents(entryPoint), audio.contains(where: { $0.components == entryPoint }) else { throw LANSyncFailure.invalidManifest }
         for paragraph in paragraphs {
             guard paragraph.text.utf8.count <= 1024 * 1024, (paragraph.speaker?.utf8.count ?? 0) <= 4096,
+                  (paragraph.separator?.utf8.count ?? 0) <= 4096, paragraph.speakers.count <= 16,
+                  Set(paragraph.speakers.map(\.id)).count == paragraph.speakers.count,
+                  paragraph.speakers.allSatisfy({ $0.name.utf8.count <= 4096 }),
                   (paragraph.startMs == nil && paragraph.endMs == nil) ||
                   (paragraph.startMs != nil && paragraph.endMs != nil && paragraph.startMs! >= 0 && paragraph.endMs! >= paragraph.startMs!) else {
                 throw LANSyncFailure.invalidManifest
@@ -73,6 +82,11 @@ struct LANSyncRecord: Codable, Equatable {
 enum LANSyncFailure: Error { case invalidManifest, invalidFile, integrity }
 
 enum LANSyncIntegrity {
+    static func stableID(_ value: String) -> UUID {
+        var bytes = Array(SHA256.hash(data: Data(value.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x50; bytes[8] = (bytes[8] & 0x3f) | 0x80
+        return UUID(uuid: (bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]))
+    }
     /// Incremental hashing keeps memory bounded for long recordings.
     static func digest(_ url: URL) throws -> (sha256: String, byteCount: Int64) {
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])

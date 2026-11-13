@@ -49,13 +49,15 @@ import AVFoundation
         let multiID = UUID()
         let partA = LANSyncFile(components: ["part-00000.wav"], byteCount: hash.byteCount, sha256: hash.sha256, timelineStartMs: 0, durationMs: 1000)
         let partB = LANSyncFile(components: ["part-00001.wav"], byteCount: hash.byteCount, sha256: hash.sha256, timelineStartMs: 1500, durationMs: 1000)
+        let one = LANSyncSpeaker(id: UUID(), name: "A"), two = LANSyncSpeaker(id: UUID(), name: "B")
         let multi = LANSyncRecord(schemaVersion: 1, id: multiID, title: "Multipart", createdAt: date, durationMs: 2500,
-            language: "zh", paragraphs: [LANSyncParagraph(text: "second", startMs: 1600, endMs: 1800, speaker: nil)],
+            language: "zh", paragraphs: [LANSyncParagraph(text: "second", startMs: 1600, endMs: 1800, speaker: nil, separator: " ", speakers: [one, two])],
             summary: nil, audio: [partA, partB], entryPoint: partA.components)
         try await importer.install(multi, files: [audio, audio])
         let multiRecord = try library.load(multiID)
         precondition(multiRecord.audioFiles.count == 2 && multiRecord.transcriptParagraphs.first?.audioFile == multiRecord.audioFiles[1])
         precondition(abs((multiRecord.transcriptParagraphs.first?.localStart ?? -1) - 0.1) < 0.0001)
+        precondition(multiRecord.text == " second" && multiRecord.transcriptParagraphs.first?.speakerIDs == [one.id.uuidString, two.id.uuidString])
         try Data("tampered".utf8).write(to: audio)
         do { try await importer.install(first, files: [audio]); fatalError("tampered audio accepted") } catch { }
         let final = try library.load(id)

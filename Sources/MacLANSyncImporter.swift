@@ -116,12 +116,15 @@ import CryptoKit
         }
         var speakers: [String: String] = [:], names: [String: String] = [:]
         result.transcriptParagraphs = input.paragraphs.enumerated().map { number, row in
-            let speaker = row.speaker.map { name -> String in
+            let fallback = row.speakers.isEmpty ? row.speaker.map { name -> String in
                 if let old = speakers[name] { return old }
                 let hash = SHA256.hash(data: Data((input.id.uuidString + ":" + name).utf8))
                 let bytes = Array(hash.prefix(16))
                 let key = UUID(uuid: (bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5],bytes[6],bytes[7],bytes[8],bytes[9],bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15])).uuidString
                 speakers[name] = key; names[key] = name; return key
+            } : nil
+            let speakerIDs = row.speakers.isEmpty ? (fallback.map { [$0] } ?? []) : row.speakers.map { item in
+                let key = item.id.uuidString; names[key] = item.name; return key
             }
             let index: Int? = {
                 if audioFiles.count == 1 { return 0 }
@@ -137,9 +140,9 @@ import CryptoKit
                 let offset = audioFiles.count == 1 ? 0 : (input.audio[index].timelineStartMs ?? 0)
                 return Double(start - offset) / 1000
             }
-            return TranscriptParagraph(id: row.id, text: row.text, separator: number == 0 ? "" : "\n",
+            return TranscriptParagraph(id: row.id, text: row.text, separator: row.separator ?? (number == 0 ? "" : "\n"),
                 start: row.startMs.map { Double($0) / 1000 }, end: row.endMs.map { Double($0) / 1000 },
-                audioFile: audioFile, speakerIDs: speaker.map { [$0] } ?? [], localStart: localStart)
+                audioFile: audioFile, speakerIDs: speakerIDs, localStart: localStart)
         }
         result.text = result.paragraphText; result.speakerNames = names; result.customSpeakerNameIDs = Set(names.keys)
         return result
