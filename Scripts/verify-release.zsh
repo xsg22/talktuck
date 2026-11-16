@@ -27,6 +27,9 @@ verify_app() {
     [[ "$(lipo -archs "$bundle/Contents/MacOS/TalkTuckApp")" == arm64 ]]
     [[ -x "$bundle/Contents/MacOS/talktuck" ]]
     [[ -f "$bundle/Contents/Resources/AppIcon.icns" ]]
+    [[ -f "$bundle/Contents/Resources/Assets.car" ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$bundle/Contents/Info.plist")" == AppIcon ]]
+    [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$bundle/Contents/Info.plist")" == AppIcon ]]
     cmp Resources/AppIcon.png "$bundle/Contents/Resources/AppIcon.png"
     [[ -f "$bundle/Contents/Resources/AgentSkill/talktuck/SKILL.md" ]]
     cmp Resources/AgentSkill/talktuck/SKILL.md "$bundle/Contents/Resources/AgentSkill/talktuck/SKILL.md"
