@@ -5,6 +5,7 @@ struct TalkTuckErrorView: View {
     let message: String
     let close: () -> Void
     var retry: (() -> Void)? = nil
+    var openScreenCaptureSettings: (() -> Void)? = nil
     private var recordingSaved:Bool { message.hasPrefix("录音已停止并保存。") }
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -15,6 +16,7 @@ struct TalkTuckErrorView: View {
             HStack {
                 Button(L10n.text(recordingSaved ? "知道了" : "返回"), action: close).keyboardShortcut(.cancelAction)
                 Spacer()
+                if let openScreenCaptureSettings { Button(L10n.text("打开系统设置"), action: openScreenCaptureSettings).buttonStyle(TalkTuckPrimaryButtonStyle()) }
                 if let retry { Button(L10n.text("重试"), action: retry).buttonStyle(TalkTuckPrimaryButtonStyle()).keyboardShortcut(.defaultAction) }
             }
         }.padding(28).frame(width: 470).font(AppTypography.body).buttonStyle(TalkTuckSecondaryButtonStyle())

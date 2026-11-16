@@ -1,8 +1,12 @@
 import AVFoundation
 import CoreAudio
 import CoreMedia
+import CoreGraphics
 import Darwin
+import OSLog
 import ScreenCaptureKit
+
+private let capturePermissionLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.xsg.talktuck", category: "SystemAudioPermission")
 
 /// 系统声音和麦克风始终独立落盘，混音失败也不会丢失原始录音。
 enum MeetingRecordingMode: String, CaseIterable, Identifiable {
@@ -39,17 +43,42 @@ struct MeetingCaptureRequest {
 enum MeetingRecorderError: LocalizedError {
     case message(String)
     case microphoneStalled
+    case screenCapturePermission
     var errorDescription: String? {
         switch self {
         case .message(let message): return message
         case .microphoneStalled:
             return "麦克风已停止提供音频，可能已断开。请重新连接输入设备后重试继续；已有录音会保留。"
+        case .screenCapturePermission:
+            return "录制系统声音需要屏幕与系统音频录制权限。请在系统设置中允许 TalkTuck，然后返回重试。"
         }
     }
 }
 
 @MainActor
 final class MeetingRecorder {
+    private static func systemAudioFilter() async throws -> SCContentFilter {
+        capturePermissionLog.info("v1 system_audio_permission phase=check")
+        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            capturePermissionLog.notice("v1 system_audio_permission outcome=not_granted next=open_settings")
+            throw MeetingRecorderError.screenCapturePermission
+        }
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first else { throw MeetingRecorderError.message("没有可用显示器，无法采集系统声音。") }
+            return SCContentFilter(display: display, excludingWindows: [])
+        } catch {
+            throw classifySystemAudioError(error)
+        }
+    }
+    private static func classifySystemAudioError(_ error: Error) -> Error {
+        let nsError = error as NSError
+        if nsError.domain == SCStreamErrorDomain && nsError.code == SCStreamError.userDeclined.rawValue {
+            capturePermissionLog.notice("v1 system_audio_permission outcome=declined next=open_settings")
+            return MeetingRecorderError.screenCapturePermission
+        }
+        return error
+    }
     static func requireMicrophone() throws {
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var device = AudioDeviceID(kAudioObjectUnknown)
@@ -111,11 +140,7 @@ final class MeetingRecorder {
             // 先获取系统录音权限和目标，避免系统权限失败后留下正在录制的麦克风。
             var filter: SCContentFilter?
             if sources.systemAudio {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                guard let display = content.displays.first else {
-                    throw MeetingRecorderError.message("没有可用显示器，无法采集系统声音。")
-                }
-                filter = SCContentFilter(display: display, excludingWindows: [])
+                filter = try await Self.systemAudioFilter()
             }
             let captureID = UUID()
             let directory = root.appendingPathComponent(captureID.uuidString, isDirectory: true)
@@ -187,7 +212,7 @@ final class MeetingRecorder {
             if let recordingActivity { ProcessInfo.processInfo.endActivity(recordingActivity) }
             recordingActivity = nil
             state = .idle
-            throw error
+            throw sources.systemAudio ? Self.classifySystemAudioError(error) : error
         }
     }
 
@@ -224,21 +249,20 @@ final class MeetingRecorder {
                 guard allowed else { throw MeetingRecorderError.message("请在系统设置 → 隐私与安全性 → 麦克风中允许录音。") }
                 try startMicrophoneCapture(sink: sink)
             } else {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                let filter = try await Self.systemAudioFilter()
                 try checkSession()
-                guard let display = content.displays.first else { throw MeetingRecorderError.message("没有可用显示器，无法采集系统声音。") }
                 let config = SCStreamConfiguration()
                 config.capturesAudio = true; config.excludesCurrentProcessAudio = true
                 config.sampleRate = 48_000; config.channelCount = 2
                 config.width = 2; config.height = 2; config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
                 let delegate = makeSystemDelegate()
-                let candidate = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: delegate)
+                let candidate = SCStream(filter: filter, configuration: config, delegate: delegate)
                 try candidate.addStreamOutput(sink, type: .audio, sampleHandlerQueue: sink.queue)
                 do {
                     try await candidate.startCapture(); try checkSession()
                     if let error = delegate.lastError { throw error }
                 }
-                catch { try? await candidate.stopCapture(); throw error }
+                catch { try? await candidate.stopCapture(); throw Self.classifySystemAudioError(error) }
                 stream = candidate; systemDelegate = delegate
             }
             activeSources = target

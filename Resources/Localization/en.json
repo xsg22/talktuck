@@ -1,4 +1,6 @@
 {
+  "录制系统声音需要屏幕与系统音频录制权限。请在系统设置中允许 TalkTuck，然后返回重试。": "Recording system audio requires Screen & System Audio Recording permission. Allow TalkTuck in System Settings, then return and try again.",
+  "打开系统设置": "Open System Settings",
   "TalkTuck 意见反馈 (Mac)": "TalkTuck feedback (Mac)",
   "意见反馈": "Feedback",
   "问题描述": "Describe the issue",

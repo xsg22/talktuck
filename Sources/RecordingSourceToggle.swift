@@ -1,10 +1,12 @@
 import SwiftUI
+import AppKit
 
 struct RecordingSourceToggle: View {
     @ObservedObject var state: AppState
     let kind: MeetingAudioTrack.Kind
     var compact = false
     @State private var issue: String?
+    @State private var permissionIssue = false
     private var title: String { L10n.text(kind == .microphone ? "麦克风" : "系统声音") }
     private var enabled: Bool { state.activeRecordingSources.contains(kind) }
     private var switching: Bool { state.switchingRecordingSource == kind }
@@ -37,17 +39,25 @@ struct RecordingSourceToggle: View {
                     HStack {
                         Button(L10n.text("关闭")) { issue = nil }
                         Spacer()
+                        if permissionIssue {
+                            Button(L10n.text("打开系统设置")) {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+                            }
+                        }
                         Button(L10n.text("重试"), action: toggle)
                     }
                 }.padding(18).frame(width: 300)
             }
     }
     private func toggle() {
-        issue = nil
+        issue = nil; permissionIssue = false
         Task { @MainActor in
             do { try await state.toggleRecordingSource(kind) }
             catch is CancellationError { }
-            catch { issue = error.localizedDescription }
+            catch {
+                issue = error.localizedDescription
+                if let recorderError = error as? MeetingRecorderError, case .screenCapturePermission = recorderError { permissionIssue = true }
+            }
         }
     }
 }

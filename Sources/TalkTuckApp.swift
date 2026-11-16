@@ -328,7 +328,9 @@ struct MainView: View {
         .sheet(item: $state.deletionRequest) { record in ConfirmTrashView(state: state, record: record) }
         .sheet(isPresented: $state.showSettings) { ConnectionsView(state: state) }
         .sheet(isPresented: Binding(get: { state.error != nil && !missingMicrophone }, set: { if !$0 && !missingMicrophone { state.error = nil } })) {
-            TalkTuckErrorView(message: state.error ?? "", close: { state.error = nil }, retry: state.errorRetry == nil ? nil : { state.retryLastError() })
+            TalkTuckErrorView(message: state.error ?? "", close: { state.error = nil }, retry: state.errorRetry == nil ? nil : { state.retryLastError() }, openScreenCaptureSettings: state.showScreenCaptureSettings ? {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") { NSWorkspace.shared.open(url) }
+            } : nil)
         }
     }
 

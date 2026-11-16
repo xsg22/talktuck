@@ -55,7 +55,8 @@ final class AppState: ObservableObject {
     @Published private(set) var recoveryStatus = ""
     private var recoveryTask: Task<Void, Never>?
     @Published var status = "准备就绪 · 本地转录"
-    @Published var error: String? { didSet { errorRetry = nil } }
+    @Published var error: String? { didSet { errorRetry = nil; showScreenCaptureSettings = false } }
+    @Published private(set) var showScreenCaptureSettings = false
     @Published private(set) var errorRetry: (() -> Void)?
     private var errorMeetingID: UUID?
     @Published var elapsed = 0
@@ -824,7 +825,9 @@ final class AppState: ObservableObject {
                 record = original
                 if !continuing { record.status = .failed; record.recoveryMessage = "录音未能正常开始。" }
                 do { try update(record) } catch { }
-                self.error = error.localizedDescription; recordingID = nil
+                self.error = error.localizedDescription
+                if let recorderError = error as? MeetingRecorderError, case .screenCapturePermission = recorderError { showScreenCaptureSettings = true }
+                recordingID = nil
             }
             preparing = false
             if recording, activeRecordingSessionMode == .continuous { processNextContinuousSegment() }
