@@ -90,11 +90,11 @@ final class FeedbackDiagnostics: @unchecked Sendable {
     /// Export only structured fields; older journals may contain raw worker output or free text.
     func safeSnapshot(since cutoff: Date = Date().addingTimeInterval(-24 * 3600)) throws -> Data {
         let raw = try snapshot(since: cutoff)
-        let components: Set<String> = ["diagnostics", "import-queue", "transcription-engine", "worker-output", "app", "recording", "processing", "transcription"]
+        let components: Set<String> = ["diagnostics", "import-queue", "transcription-engine", "worker-output", "app", "recording", "processing", "transcription", "trash"]
         let allowedEvents: [String: Set<String>] = [
             "diagnostics": ["snapshot"], "import-queue": ["import-accepted", "copy-start", "import-saved", "import-failed", "queue-failed", "queue-wait", "transcription-blocked", "transcription-start", "transcript-saved", "transcription-finished"],
             "transcription-engine": ["stage-start", "stage-exit", "launch-failed"], "worker-output": ["capture-start", "capture-end", "drain-timeout", "mirror-write-failed", "summary", "fallback-attempt", "fallback-succeeded", "fallback-failed"],
-            "app": ["launch", "error-state-changed"], "recording": ["active-changed", "pause-changed"], "processing": ["busy-changed"], "transcription": ["phase-changed"]]
+            "app": ["launch", "error-state-changed"], "recording": ["active-changed", "pause-changed"], "processing": ["busy-changed"], "transcription": ["phase-changed"], "trash": ["delete-start", "delete-finished"]]
         let fields: Set<String> = ["schema", "platform", "build", "operation", "phase", "outcome", "reason", "queueDepth", "dropped", "elapsedMs", "stage", "engine", "streaming", "domain", "code", "status", "active", "busy", "paused", "hasError", "workerID", "bytesCount", "windowHours", "retainedFileLimit", "fileSizeLimitBytes", "possiblyTruncated", "incompleteWorkerCaptures", "damagedLogData"]
         var result = Data()
         for line in raw.split(separator: 10) {

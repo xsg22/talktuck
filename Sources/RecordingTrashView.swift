@@ -4,6 +4,7 @@ struct RecordingTrashView: View {
     @ObservedObject private var appLanguage = AppLanguage.shared
     @ObservedObject var state: AppState
     let restored: () -> Void
+    @State private var deletion: MeetingRecord?
     var body: some View {
         VStack(alignment: .leading, spacing: 36) {
             VStack(alignment: .leading, spacing: 14) {
@@ -31,15 +32,24 @@ struct RecordingTrashView: View {
                                     Spacer()
                                     Button(L10n.text("恢复录音")) { if state.restoreTrash(record.id) { restored() } }
                                         .buttonStyle(TalkTuckPrimaryButtonStyle()).disabled(state.locked)
+                                    Button(L10n.text("永久删除…"), role: .destructive) { deletion = record }
+                                        .buttonStyle(TalkTuckSecondaryButtonStyle()).disabled(state.locked)
                                 }.frame(minHeight: 92)
                             }.contentShape(Rectangle()).contextMenu {
                                 Button(L10n.text("恢复录音")) { if state.restoreTrash(record.id) { restored() } }.disabled(state.locked)
+                                Button(L10n.text("永久删除…"), role: .destructive) { deletion = record }.disabled(state.locked)
                             }
                         }
                     }
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .alert(L10n.text("永久删除本机录音？"), isPresented: Binding(get: { deletion != nil }, set: { if !$0 { deletion = nil } }), presenting: deletion) { record in
+                Button(L10n.text("取消"), role: .cancel) { deletion = nil }
+                Button(L10n.text("永久删除"), role: .destructive) { _ = state.permanentlyDeleteTrash(record.id); deletion = nil }.disabled(state.locked)
+            } message: { record in
+                Text(record.title + "\n\n" + L10n.text("将永久删除本机回收站中的录音、文字和附件，无法恢复。导入前的原文件和云端、其他设备的音频副本不会由此操作删除。"))
+            }
     }
 }
 

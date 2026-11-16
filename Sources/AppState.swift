@@ -1813,6 +1813,22 @@ final class AppState: ObservableObject {
         catch { self.error = error.localizedDescription }
         return false
     }
+    @discardableResult func permanentlyDeleteTrash(_ id: UUID) -> Bool {
+        guard !locked, let library, trashedHistory.contains(where: { $0.id == id }) else { return false }
+        let operation = QueueDiagnostics.token(), started = DispatchTime.now().uptimeNanoseconds
+        QueueDiagnostics.shared.emit("delete-start", operation: operation, phase: "local", outcome: "started", depth: 0, component: "trash")
+        do {
+            try library.permanentlyDeleteTrashed(id)
+            trashedHistory.removeAll { $0.id == id }
+            status = "本机回收站中的录音已永久删除。"
+            QueueDiagnostics.shared.emit("delete-finished", operation: operation, phase: "local", outcome: "success", depth: 0, elapsedMs: QueueDiagnostics.elapsed(since: started), component: "trash")
+            return true
+        } catch {
+            self.error = "删除未完成，部分本机文件可能已移除；请重试。"
+            QueueDiagnostics.shared.emit("delete-finished", operation: operation, phase: "local", outcome: "failed", depth: 0, elapsedMs: QueueDiagnostics.elapsed(since: started), component: "trash")
+            return false
+        }
+    }
     var dataRootURL: URL { storage }
     func revealDataRoot() { NSWorkspace.shared.open(storage) }
 

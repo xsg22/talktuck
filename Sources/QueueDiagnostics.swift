@@ -10,7 +10,7 @@ final class QueueDiagnostics: @unchecked Sendable {
     private var dropped = 0
     private let limit: Int
     init(journal: FeedbackDiagnostics = .shared, limit: Int = 128) { self.journal = journal; self.limit = max(1, limit) }
-    func emit(_ event: String, operation: String, phase: String, outcome: String, depth: Int, elapsedMs: Int? = nil) {
+    func emit(_ event: String, operation: String, phase: String, outcome: String, depth: Int, elapsedMs: Int? = nil, component: String = "import-queue") {
         lock.lock()
         guard pending < limit else { dropped += 1; lock.unlock(); return }
         pending += 1; let droppedBefore = dropped; dropped = 0
@@ -18,9 +18,10 @@ final class QueueDiagnostics: @unchecked Sendable {
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
         writer.async { [self] in
             var fields: [String: Any] = ["schema": 1, "platform": "macOS", "build": build,
-                "operation": operation, "phase": phase, "outcome": outcome, "queueDepth": max(0, depth), "dropped": droppedBefore]
+                "operation": operation, "phase": phase, "outcome": outcome, "dropped": droppedBefore]
+            if component == "import-queue" { fields["queueDepth"] = max(0, depth) }
             if let elapsedMs { fields["elapsedMs"] = max(0, elapsedMs) }
-            journal.record("import-queue", event, fields: fields)
+            journal.record(component, event, fields: fields)
             lock.lock(); pending -= 1; lock.unlock()
         }
     }

@@ -319,7 +319,8 @@ final class MeetingLibrary {
     func syncDeletions(_ userId:UUID) throws -> Set<String> {
         let groups = try rawOrganization().groups.filter { $0.userId == userId && $0.syncDeleted == true }.map { LibrarySyncValue.key(.group,$0.id) }
         let records = try listTrashed().filter { $0.userId == userId }.map { LibrarySyncValue.key(.recording,$0.id) }
-        return Set(groups + records)
+        let purged = try readPurgedTombstones().filter { $0.userId == userId }.map { LibrarySyncValue.key(.recording,$0.id) }
+        return Set(groups + records + purged)
     }
     func directory(for id: UUID) -> URL {
         meetingsDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
@@ -639,6 +640,27 @@ final class MeetingLibrary {
     }
 
     private var trashDirectory: URL { root.appendingPathComponent("Trash", isDirectory: true) }
+    private struct PurgedTombstone: Codable, Equatable { let id: UUID; let userId: UUID }
+    private struct PurgedTombstoneFile: Codable { let version: Int; var entries: [PurgedTombstone] }
+    private var purgedTombstoneURL: URL { root.appendingPathComponent("purged-recording-tombstones.json") }
+
+    private func readPurgedTombstones() throws -> [PurgedTombstone] {
+        let url = purgedTombstoneURL
+        guard manager.fileExists(atPath: url.path) else { return [] }
+        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .fileSizeKey])
+        guard values.isSymbolicLink != true, let size = values.fileSize, size > 0, size <= 16 * 1024 * 1024 else { throw CocoaError(.fileReadCorruptFile) }
+        let file = try JSONDecoder().decode(PurgedTombstoneFile.self, from: Data(contentsOf: url))
+        guard file.version == 1, file.entries.count <= 100_000, Set(file.entries.map { $0.id }).count == file.entries.count else { throw CocoaError(.fileReadCorruptFile) }
+        return file.entries
+    }
+
+    private func savePurgedTombstones(_ entries: [PurgedTombstone]) throws {
+        let url = purgedTombstoneURL
+        if (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true { throw MeetingLibraryError.unsafeAudioPath }
+        let data = try JSONEncoder().encode(PurgedTombstoneFile(version: 1, entries: entries))
+        guard data.count <= 16 * 1024 * 1024 else { throw CocoaError(.fileWriteOutOfSpace) }
+        try data.write(to: url, options: .atomic)
+    }
 
     private func validateTrashDirectory() throws {
         if (try? trashDirectory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
@@ -681,6 +703,11 @@ final class MeetingLibrary {
         let source = trashDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
         guard (try? source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
               try listTrashed().contains(where: { $0.id == id }) else { throw MeetingLibraryError.missingMeeting }
+        // A failed purge may have written a tombstone while leaving the item in Trash.
+        // Trash itself still supplies the sync deletion until this move succeeds.
+        guard !manager.fileExists(atPath: directory(for: id).path) else { throw CocoaError(.fileWriteFileExists) }
+        let tombstones = try readPurgedTombstones()
+        if tombstones.contains(where: { $0.id == id }) { try savePurgedTombstones(tombstones.filter { $0.id != id }) }
         // moveItem 拒绝覆盖；与活跃库同名时保留两份原件并报告错误。
         try manager.moveItem(at: source, to: directory(for: id))
         let restored = try load(id)
@@ -689,6 +716,44 @@ final class MeetingLibrary {
             catch { publicationError = "录音已恢复，本机Agent快照暂未更新，请重新发布。" }
         }
         didChange?(); return restored
+    }
+
+    /// Delete only this user's local Trash copy; imported originals and remote audio are untouched.
+    func permanentlyDeleteTrashed(_ id: UUID) throws {
+        try validateTrashDirectory()
+        guard let record = try listTrashed().first(where: { $0.id == id }) else { throw MeetingLibraryError.missingMeeting }
+        let source = trashDirectory.appendingPathComponent(id.uuidString, isDirectory: true)
+        guard (try? source.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { throw MeetingLibraryError.unsafeAudioPath }
+        let metadata = source.appendingPathComponent("meeting.json")
+        guard (try? metadata.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { throw MeetingLibraryError.unsafeAudioPath }
+        let metadataData = try Data(contentsOf: metadata)
+        let checkpoints = root.appendingPathComponent("TranscriptionCheckpoints", isDirectory: true)
+        let checkpoint = checkpoints.appendingPathComponent(id.uuidString, isDirectory: true)
+        for url in [checkpoints, checkpoint] where manager.fileExists(atPath: url.path) {
+            guard (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else { throw MeetingLibraryError.unsafeAudioPath }
+        }
+        if let owner = record.userId {
+            var tombstones = try readPurgedTombstones()
+            if let existing = tombstones.first(where: { $0.id == id }) {
+                guard existing.userId == owner else { throw MeetingLibraryError.missingMeeting }
+            } else {
+                tombstones.append(PurgedTombstone(id: id, userId: owner)); try savePurgedTombstones(tombstones)
+            }
+        }
+        if manager.fileExists(atPath: checkpoint.path) { try manager.removeItem(at: checkpoint) }
+        // Keep the metadata until the other items are gone, so a partial
+        // failure remains visible and retryable instead of disappearing.
+        for item in try manager.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) where item.lastPathComponent != "meeting.json" {
+            try manager.removeItem(at: item)
+        }
+        try manager.removeItem(at: metadata)
+        do { try manager.removeItem(at: source) }
+        catch {
+            try? metadataData.write(to: metadata, options: .atomic)
+            throw error
+        }
+        // Trash already represented the synced deletion; purging the local
+        // copy must not itself schedule a remote operation.
     }
 
     /// 用于初次发布和显式修复；不改变会议状态。
