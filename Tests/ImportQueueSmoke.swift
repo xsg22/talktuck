@@ -49,6 +49,14 @@ import AVFoundation
         let afterNext = try library.load(queued[1].id)
         precondition(afterFailure.status == .failed && afterFailure.queuedTranscriptionAt == nil)
         precondition(afterNext.status == .recorded && afterNext.queuedTranscriptionAt != nil, "missing model pauses a valid next job")
+        // The active transcription may finish while the file chooser remains open.
+        let third = root.appendingPathComponent("three.wav")
+        try Data("three".utf8).write(to: third)
+        release.signal()
+        state.useAudio(third, enqueueIfIdle: true)
+        await state.waitForAudioImports()
+        let afterChooser = try library.list().first { $0.title == "three" }
+        precondition(afterChooser?.queuedTranscriptionAt != nil && afterChooser?.status == .recorded)
         state.recording = true
         precondition(!state.canImportAudio)
         print("PASS: imports remain ordered and persisted during transcription; originals and active selection preserved")

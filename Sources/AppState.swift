@@ -221,6 +221,7 @@ final class AppState: ObservableObject {
     }
     var locked: Bool { busy || recording || preparing || quitting || recoveryBusy || continuousWorker != nil }
     var canImportAudio: Bool { !recording && !preparing && !quitting && !recoveryBusy && continuousWorker == nil }
+    var shouldQueueImportedAudio: Bool { busy || queuedImportCount > 0 }
     var canRetryMicrophone: Bool { recording && paused && recorder.canRetryMicrophone }
     var canSyncFinalTranscript: Bool {
         !locked && !syncing && current?.status == .completed && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -540,11 +541,12 @@ final class AppState: ObservableObject {
 
     func chooseAudio() {
         guard canImportAudio else { return }
+        let queueWhenSelected = shouldQueueImportedAudio
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio, .mpeg4Audio, .mp3, .wav, .aiff]
         panel.allowsMultipleSelection = false
         panel.message = L10n.text("导入音频后会在本机保存副本；登录并开启同步时，原音会自动上传。")
-        if panel.runModal() == .OK, let url = panel.url { useAudio(url) }
+        if panel.runModal() == .OK, let url = panel.url { useAudio(url, enqueueIfIdle: queueWhenSelected) }
     }
 
     func reportRecoverableError(_ message: String, retry: @escaping () -> Void) {
@@ -561,19 +563,20 @@ final class AppState: ObservableObject {
         retry()
     }
 
-    func useAudio(_ url: URL) {
+    func useAudio(_ url: URL, enqueueIfIdle: Bool = false) {
         guard canImportAudio, let library, saveEdits() else { return }
+        let shouldEnqueue = enqueueIfIdle || shouldQueueImportedAudio
         var isDirectory: ObjCBool = false
         guard url.isFileURL, FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
-            reportRecoverableError("导入失败：\(MeetingLibraryError.missingAudio.localizedDescription)") { [weak self] in self?.useAudio(url) }
+            reportRecoverableError("导入失败：\(MeetingLibraryError.missingAudio.localizedDescription)") { [weak self] in self?.useAudio(url, enqueueIfIdle: shouldEnqueue) }
             return
         }
         var record = MeetingRecord(title: url.deletingPathExtension().lastPathComponent, language: language, status: .recorded)
-        if busy || queuedImportCount > 0 { record.queuedTranscriptionAt = Date() }
+        if shouldEnqueue { record.queuedTranscriptionAt = Date() }
         record.source = .imported
         let destination: URL
         do { destination = try library.importDestination(for: record.id, source: url) }
-        catch { reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }; return }
+        catch { reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url, enqueueIfIdle: shouldEnqueue) }; return }
         let securityScoped = url.startAccessingSecurityScopedResource()
         let predecessor = importTail
         let importStart = DispatchTime.now().uptimeNanoseconds
@@ -620,7 +623,7 @@ final class AppState: ObservableObject {
                 Self.importLog.error("import_failed version=1 category=copy_or_save")
                 queueEvent("import-failed", id: record.id, phase: "import", outcome: "copy-or-save-failed", elapsed: QueueDiagnostics.elapsed(since: copyStart))
                 queueDiagnosticIDs.removeValue(forKey: record.id)
-                reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }
+                reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url, enqueueIfIdle: shouldEnqueue) }
             }
         }
     }

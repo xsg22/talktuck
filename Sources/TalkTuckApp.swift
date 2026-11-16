@@ -124,6 +124,15 @@ struct MainView: View {
                 Button { showNewRecordingSetup() } label: {
                     Label(L10n.text("开始新录音"), systemImage: "mic").frame(maxWidth: .infinity)
                 }.buttonStyle(TalkTuckPrimaryButtonStyle()).disabled(state.locked || state.syncing || missingMicrophone)
+                Button { state.chooseAudio() } label: {
+                    Label(L10n.text("导入音频…"), systemImage: "doc.badge.plus").frame(maxWidth: .infinity)
+                }.buttonStyle(TalkTuckSecondaryButtonStyle()).disabled(!state.canImportAudio)
+                    .accessibilityIdentifier("sidebar-import-audio")
+                if state.busy {
+                    Text(L10n.text("新导入的音频将排队转录"))
+                        .font(AppTypography.secondary).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 VStack(spacing: 3) {
                     filterRow("全部", symbol: "waveform", count: state.history.count)
                     filterRow("星标", symbol: "star", count: state.history.filter(\.isStarred).count)
@@ -619,7 +628,8 @@ struct MainView: View {
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(targeted ? accent : .clear, lineWidth: 2))
             .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
                 guard state.canImportAudio, let provider = providers.first else { return false }
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in if let url { Task { @MainActor in state.useAudio(url) } } }
+                let queueWhenDropped = state.shouldQueueImportedAudio
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in if let url { Task { @MainActor in state.useAudio(url, enqueueIfIdle: queueWhenDropped) } } }
                 return true
             }
     }
