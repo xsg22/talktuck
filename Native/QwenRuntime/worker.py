@@ -141,7 +141,9 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
             if budget[0]<=0:raise SeamAmbiguous('Transcript token limit reached; seam retry budget exhausted; partial result not saved')
             budget[0]-=1
             try:return recover_split(model,audio,start,end,language,hotwords,cut,budget)
-            except (SeamAmbiguous,RepetitionDetected):continue
+            # If even a child reaches its limit, try another local boundary;
+            # never let a whole-file fallback bypass recovery safety checks.
+            except TokenLimitReached:continue
         raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
     return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
 

@@ -52,6 +52,11 @@ class Recovery(unittest.TestCase):
                 with self.assertRaises(type(failure)):
                     worker.recognized_segment(None,audio,start=0,end=4,language=None)
 
+    def test_terminal_child_token_limit_stays_an_unsafe_seam(self):
+        with patch.object(worker,'generate_complete',side_effect=TokenLimitReached('limit')):
+            with self.assertRaises(worker.SeamAmbiguous):
+                worker.recognized_segment(None,[.1]*(4*RATE),start=0,end=4,language='English')
+
     def test_repetitive_recovery_fails_closed_without_deleting_text(self):
         self.assertTrue(worker.suspicious_repetition('重复内容'*8))
         self.assertFalse(worker.suspicious_repetition('这是一段正常谈话，用来验证短句没有被重复生成。'))
