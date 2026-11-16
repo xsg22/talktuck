@@ -609,7 +609,8 @@ final class AppState: ObservableObject {
                     guard duration.isFinite, duration >= 0 else { throw TranscriptionError.message("录音时长无效。") }
                     let output = try await withTaskCancellationHandler {
                         try await Task.detached(priority: .userInitiated) {
-                            try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true)
+                            let checkpoint = library.root.appendingPathComponent("TranscriptionCheckpoints", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true).appendingPathComponent(String(index), isDirectory: true)
+                            return try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true, checkpointDirectory: checkpoint)
                         }.value
                     } onCancel: { engine.cancel() }
                     outputs.append(output); durations.append(duration)

@@ -4,7 +4,7 @@ import os
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['TOKENIZERS_PARALLELISM']='false'
-import json,math,pathlib,struct,sys,wave
+import hashlib,json,math,pathlib,struct,sys,wave,os,unicodedata
 from language_policy import recognition_language, alignment_language
 from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, RATE
 
@@ -94,32 +94,32 @@ def stream_clips(max_seconds=MAX_ASR_SECONDS):
         if len(data)!=frames*4:raise ValueError('Incomplete clip PCM')
         yield item,data
 
-def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False):
+class SeamAmbiguous(TokenLimitReached):
+    pass
+
+def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False,_budget=None):
     try:
         generated=generate_complete(model,audio,language=language,hotwords=hotwords)
     except TokenLimitReached:
-        # Keep each sample exactly once; prefer a quiet point near the middle.
+        # Prefer a quiet point near the middle, with real overlapping context.
         # Bound recursion so a looping decoder cannot run indefinitely.
         if len(audio)<4*RATE:
             raise
         middle=len(audio)//2; step=RATE//10
         radius=min(2*RATE,len(audio)//4)
-        candidates=range(middle-radius,middle+radius+1,step)
-        cut=min(candidates,key=lambda n:(sum(float(x)*float(x) for x in audio[n-step//2:n+step//2]),abs(n-middle)))
+        candidates=sorted(range(middle-radius,middle+radius+1,step),key=lambda n:(sum(float(x)*float(x) for x in audio[n-step//2:n+step//2]),abs(n-middle)))
+        cuts=[]
+        for candidate in candidates:
+            if all(abs(candidate-other)>=RATE//2 for other in cuts):cuts.append(candidate)
+            if len(cuts)==5:break
+        budget=_budget if _budget is not None else [16]
         print('Qwen3-ASR: token limit; retrying bounded subwindows',file=sys.stderr,flush=True)
-        # Do not discard repeat-recovery candidates belonging to a child.
-        left=recognized_segment(model,audio[:cut],start=start,end=start+cut/RATE,language=language,hotwords=hotwords)
-        right=recognized_segment(model,audio[cut:],start=start+cut/RATE,end=end,language=language,hotwords=hotwords)
-        parts=[]
-        for child in (left,right):
-            if not child['text']:continue
-            pieces=child.get('alignmentParts') or [dict(text=child['text'],start=child['start'],end=child['end'])]
-            if parts and parts[-1]['text'][-1:].isascii() and not parts[-1]['text'][-1:].isspace() and pieces[0]['text'][:1].isascii() and pieces[0]['text'][:1].isalnum():
-                pieces[0]=dict(pieces[0],text=' '+pieces[0]['text'])
-            parts.extend(pieces)
-        segment=dict(text=''.join(p['text'] for p in parts),start=start,end=end)
-        if parts:segment['alignmentParts']=parts
-        return segment
+        for cut in cuts:
+            if budget[0]<=0:raise SeamAmbiguous('Transcript token limit reached; seam retry budget exhausted; partial result not saved')
+            budget[0]-=1
+            try:return recover_split(model,audio,start,end,language,hotwords,cut,budget)
+            except SeamAmbiguous:continue
+        raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
     text=generated.text.strip();segment=dict(text=text,start=start,end=end)
     if text and recover_repeats:
         from repeat_recovery import recover
@@ -133,13 +133,56 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
             parts=prepare(model,audio,text,language=language,hotwords=hotwords)
             segment['alignmentParts']=[dict(text=p['text'],start=start+p['start'],end=start+p['end']) for p in parts]
         except (AlignmentWindowError,ValueError) as error:
-            # Recognition remains authoritative; optional speaker/timestamp
-            # analysis must not invent timing or erase this completed text.
             segment['alignmentIssue']=str(error)
             print('Bounded alignment preparation unavailable: '+str(error),file=sys.stderr,flush=True)
     return segment
 
-def transcribe_stream(model_path,language,output,hints_path):
+def recover_split(model,audio,start,end,language,hotwords,cut,budget):
+        # Do not discard repeat-recovery candidates belonging to a child.
+        overlap=min(2*RATE,cut//3,(len(audio)-cut)//3)
+        left_end=cut+overlap;right_start=cut-overlap
+        left=recognized_segment(model,audio[:left_end],start=start,end=start+left_end/RATE,language=language,hotwords=hotwords,_budget=budget)
+        right=recognized_segment(model,audio[right_start:],start=start+right_start/RATE,end=end,language=language,hotwords=hotwords,_budget=budget)
+        # Exact-only overlap avoids dropping a new word on a fuzzy match.
+        a=''.join(c.casefold() for c in left['text'] if unicodedata.category(c)[0] in 'LN')
+        indexed=[(x,i) for i,c in enumerate(right['text']) if unicodedata.category(c)[0] in 'LN' for x in c.casefold()]
+        b=''.join(x for x,_ in indexed);tail=right['text'];matched=False
+        for n in range(min(65,len(a),len(b)),2,-1):
+            chinese=language=='Chinese' and any('\u3400'<=c<='\u9fff' for c in b[:n])
+            if n<(3 if chinese else 6):continue
+            if a[-n:]==b[:n]:
+                pos=indexed[n-1][1]+1
+                while pos<len(right['text']) and unicodedata.category(right['text'][pos])[0] not in 'LN':pos+=1
+                tail=right['text'][pos:];matched=True;break
+        if not matched:
+            # Do not guess ownership of speech at an ambiguous seam. A very
+            # quiet overlap is safe to concatenate; otherwise retry upstream.
+            samples=audio[right_start:left_end]
+            peak=max((abs(float(x)) for x in samples),default=0)
+            if peak>2.0/32768.0:
+                raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
+            tail=right['text']
+        parts=[]
+        for child,body in ((left,left['text']),(right,tail)):
+            if not child['text']:continue
+            pieces=child.get('alignmentParts') or [dict(text=child['text'],start=child['start'],end=child['end'])]
+            removed=len(child['text'])-len(body)
+            trimmed=[]
+            for piece in pieces:
+                drop=min(removed,len(piece['text']));removed-=drop
+                if piece['text'][drop:]:trimmed.append(dict(piece,text=piece['text'][drop:]))
+            pieces=trimmed
+            if removed or ''.join(p['text'] for p in pieces)!=body:
+                raise ValueError('Incomplete overlap text; partial result not saved')
+            if not pieces:continue
+            if parts and parts[-1]['text'][-1:].isascii() and not parts[-1]['text'][-1:].isspace() and pieces[0]['text'][:1].isascii() and pieces[0]['text'][:1].isalnum():
+                pieces[0]=dict(pieces[0],text=' '+pieces[0]['text'])
+            parts.extend(pieces)
+        segment=dict(text=''.join(p['text'] for p in parts),start=start,end=end)
+        if parts:segment['alignmentParts']=parts
+        return segment
+
+def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None):
     import numpy as np
     import mlx.core as mx
     from mlx_audio.stt import load
@@ -149,11 +192,57 @@ def transcribe_stream(model_path,language,output,hints_path):
     recover_repeats=hints.get('recoverRepeatedOutput',False)
     if not isinstance(recover_repeats,bool):raise ValueError('Invalid repeat recovery option')
     configure_memory(mx)
-    model=load(pathlib.Path(model_path).resolve(strict=True));selected_language=recognition_language(language);result=[]
-    for clip,data in stream_clips():
-        segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=select_hotwords(words,context) or None,recover_repeats=recover_repeats)
+    model_root=pathlib.Path(model_path).resolve(strict=True)
+    checkpoint=pathlib.Path(checkpoint_path) if checkpoint_path else None
+    if checkpoint:
+        try:
+            if checkpoint.resolve()!=checkpoint.absolute():raise OSError('Invalid checkpoint directory')
+            checkpoint.mkdir(mode=0o700,parents=True,exist_ok=True)
+            if checkpoint.resolve()!=checkpoint.absolute() or not checkpoint.is_dir():raise OSError('Invalid checkpoint directory')
+        except OSError:
+            checkpoint=None
+            print('Qwen3-ASR: checkpoint unavailable',file=sys.stderr,flush=True)
+    model_state=[(p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(model_root.iterdir()) if p.is_file()]
+    runtime=pathlib.Path(sys.executable).stat()
+    model=load(model_root);selected_language=recognition_language(language);result=[];reused=0
+    for index,(clip,data) in enumerate(stream_clips()):
+        selected=select_hotwords(words,context) or None
+        identity=json.dumps([1,clip,language,selected,context,recover_repeats,model_state,runtime.st_size,runtime.st_mtime_ns],sort_keys=True,ensure_ascii=False).encode()
+        key=hashlib.sha256(identity+data).hexdigest()
+        # At most 8192 files of 64 KiB per imported file (512 MiB).
+        entry=checkpoint/('%08d.json'%index) if checkpoint and index<8192 else None
+        if checkpoint and index==8192:print('Qwen3-ASR: checkpoint limit reached',file=sys.stderr,flush=True)
+        segment=None
+        if entry and not entry.is_symlink():
+            try:
+                if entry.stat().st_size<=64*1024:
+                    cached=json.loads(entry.read_text())
+                    candidate=cached['segment']
+                    checksum=hashlib.sha256(json.dumps(candidate,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                    if cached['key']==key and cached['checksum']==checksum and isinstance(candidate.get('text'),str) and candidate.get('start')==clip['start'] and candidate.get('end')==clip['end']:
+                        segment=candidate
+            except (OSError,ValueError,KeyError,TypeError,AttributeError):pass
+        if segment is None:
+            segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=selected,recover_repeats=recover_repeats)
+            if entry and not entry.is_symlink():
+                try:
+                    checksum=hashlib.sha256(json.dumps(segment,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                    encoded=json.dumps(dict(key=key,segment=segment,checksum=checksum),ensure_ascii=False).encode()
+                    if len(encoded)<=64*1024:
+                        temporary=checkpoint/('%08d.partial'%index)
+                        if temporary.is_symlink():raise OSError('Invalid checkpoint')
+                        fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+                        with os.fdopen(fd,'wb') as f:f.write(encoded);f.flush();os.fsync(f.fileno())
+                        os.replace(temporary,entry)
+                    else:print('Qwen3-ASR: checkpoint too large',file=sys.stderr,flush=True)
+                except OSError:
+                    print('Qwen3-ASR: checkpoint unavailable',file=sys.stderr,flush=True)
+        else:
+            reused+=1
+            if reused%100==0:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
         result.append(segment)
         context=(context+' '+segment['text'])[-2000:];mx.clear_cache()
+    if reused:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
     output=pathlib.Path(output);temp=output.with_suffix('.partial')
     temp.write_text(json.dumps({'segments':result},ensure_ascii=False));temp.replace(output)
 
@@ -324,7 +413,7 @@ def main():
         diarize(sys.argv[2],None,sys.argv[3],streaming=True,checkpoint=sys.argv[4]);return
     if len(sys.argv)==6 and sys.argv[1]=='--diarize-checkpoint':
         diarize(sys.argv[2],sys.argv[3],sys.argv[4],checkpoint=sys.argv[5]);return
-    if len(sys.argv)==6 and sys.argv[1]=='--transcribe-stream':
+    if len(sys.argv) in (6,7) and sys.argv[1]=='--transcribe-stream':
         transcribe_stream(*sys.argv[2:]);return
     if len(sys.argv)==5 and sys.argv[1]=='--align-stream':
         align_stream(*sys.argv[2:]);return

@@ -10,18 +10,28 @@ class Recovery(unittest.TestCase):
         audio=[.1]*(8*RATE);calls=[]
         def generate(model,samples,**kwargs):
             calls.append(len(samples))
-            if len(samples)>5*RATE:raise TokenLimitReached('limit')
-            return types.SimpleNamespace(text='hello' if len(calls)==2 else 'world')
+            if len(samples)>6*RATE:raise TokenLimitReached('limit')
+            return types.SimpleNamespace(text='hello shared phrase' if len(calls)==2 else 'shared phrase world')
         with patch.object(worker,'generate_complete',generate):
             result=worker.recognized_segment(None,audio,start=12,end=20,language='English')
         self.assertEqual(len(calls),3)
-        self.assertEqual(result['text'],'hello world')
+        self.assertEqual(result['text'],'hello shared phrase world')
         parts=result['alignmentParts']
         self.assertEqual(parts[0]['start'],12)
-        self.assertEqual(parts[0]['end'],parts[1]['start'])
+        self.assertLess(parts[1]['start'],parts[0]['end'])
         self.assertEqual(parts[1]['end'],20)
         self.assertEqual(''.join(p['text'] for p in parts),result['text'])
-        self.assertEqual(sum(calls[1:]),len(audio))
+        self.assertGreater(sum(calls[1:]),len(audio))
+
+    def test_ambiguous_speech_overlap_is_never_published(self):
+        audio=[.1]*(8*RATE);calls=[]
+        def generate(model,samples,**kwargs):
+            if len(samples)>6*RATE:raise TokenLimitReached('limit')
+            calls.append(1)
+            return types.SimpleNamespace(text='first phrase' if len(calls)%2 else 'another phrase')
+        with patch.object(worker,'generate_complete',generate):
+            with self.assertRaises(TokenLimitReached):
+                worker.recognized_segment(None,audio,start=0,end=8,language='English')
 
     def test_unrecoverable_limit_and_other_failures_propagate(self):
         audio=[0.]*(4*RATE)
