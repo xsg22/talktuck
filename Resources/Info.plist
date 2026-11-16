@@ -33,6 +33,8 @@
 	<string>2129</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>采集电脑播放的声音，并在本机保存和转录。</string>
 	<key>NSHighResolutionCapable</key>
