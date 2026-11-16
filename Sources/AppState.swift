@@ -38,6 +38,18 @@ final class AppState: ObservableObject {
     private let copyImportedAudio: @Sendable (URL, URL) throws -> Void
     private var importTail: Task<Void, Never>?
     private var queuedImportCount = 0
+    private var queueDiagnosticIDs: [UUID: String] = [:]
+    private var transcriptionDiagnosticStart: UInt64?
+    /// Persisted recordings awaiting transcription; excludes imports still being copied.
+    private func queueDepth() -> Int { history.filter { $0.queuedTranscriptionAt != nil }.count }
+    private func queueEvent(_ event: String, id: UUID, phase: String, outcome: String, elapsed: Int? = nil) {
+        if queueDiagnosticIDs[id] == nil && queueDiagnosticIDs.count >= 128, let evicted = queueDiagnosticIDs.keys.first {
+            queueDiagnosticIDs.removeValue(forKey: evicted)
+        }
+        let token = queueDiagnosticIDs[id] ?? QueueDiagnostics.token()
+        queueDiagnosticIDs[id] = token
+        QueueDiagnostics.shared.emit(event, operation: token, phase: phase, outcome: outcome, depth: queueDepth(), elapsedMs: elapsed)
+    }
     private static let importLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.xsg.talktuck", category: "audio-import")
     @Published var recording = false
     @Published var preparing = false
@@ -564,6 +576,8 @@ final class AppState: ObservableObject {
         catch { reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }; return }
         let securityScoped = url.startAccessingSecurityScopedResource()
         let predecessor = importTail
+        let importStart = DispatchTime.now().uptimeNanoseconds
+        queueEvent("import-accepted", id: record.id, phase: "import", outcome: record.queuedTranscriptionAt == nil ? "direct" : "queued")
         let copy = copyImportedAudio
         let originalSelection = selection
         importingAudioCount += 1
@@ -571,6 +585,8 @@ final class AppState: ObservableObject {
         Self.importLog.info("import_queued version=1")
         importTail = Task { [self] in
             if let predecessor { await predecessor.value }
+            queueEvent("copy-start", id: record.id, phase: "copy", outcome: "started", elapsed: QueueDiagnostics.elapsed(since: importStart))
+            let copyStart = DispatchTime.now().uptimeNanoseconds
             defer {
                 if securityScoped { url.stopAccessingSecurityScopedResource() }
                 importingAudioCount -= 1
@@ -584,6 +600,8 @@ final class AppState: ObservableObject {
                 catch { try? FileManager.default.removeItem(at: destination); throw error }
                 publishStoredRecord(record)
                 Self.importLog.info("import_saved version=1 queued=\(record.queuedTranscriptionAt != nil)")
+                queueEvent("import-saved", id: record.id, phase: "copy-and-save", outcome: record.queuedTranscriptionAt == nil ? "direct" : "queued", elapsed: QueueDiagnostics.elapsed(since: copyStart))
+                if record.queuedTranscriptionAt == nil { queueDiagnosticIDs.removeValue(forKey: record.id) }
                 if record.queuedTranscriptionAt == nil && !locked && selection == originalSelection {
                     select(record.id)
                     status = "音频已保存在录音资料库，可以开始转录"
@@ -600,6 +618,8 @@ final class AppState: ObservableObject {
                 startNextQueuedTranscription()
             } catch {
                 Self.importLog.error("import_failed version=1 category=copy_or_save")
+                queueEvent("import-failed", id: record.id, phase: "import", outcome: "copy-or-save-failed", elapsed: QueueDiagnostics.elapsed(since: copyStart))
+                queueDiagnosticIDs.removeValue(forKey: record.id)
                 reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }
             }
         }
@@ -609,9 +629,12 @@ final class AppState: ObservableObject {
     func waitForAudioImports() async { await importTail?.value }
 
     func transcribe(recordingID targetID: UUID? = nil) {
-        speechModels.refresh()
-        guard model != nil else { showModelDownload = true; return }
         let target = targetID.flatMap { id in history.first { $0.id == id } } ?? (targetID == nil ? current : nil)
+        speechModels.refresh()
+        guard model != nil else {
+            if let target { queueEvent("transcription-blocked", id: target.id, phase: "preflight", outcome: "model-unavailable") }
+            showModelDownload = true; return
+        }
         guard let model, !locked, var record = target, let library else { return }
         if resumeProgressiveIfPresent(record) { return }
         if record.recordingSessionMode == .continuous && !record.continuousSegmentFiles.isEmpty {
@@ -619,9 +642,10 @@ final class AppState: ObservableObject {
             return
         }
         guard let executable = ASRResources.executable("qwen-asr") else {
+            queueEvent("transcription-blocked", id: record.id, phase: "preflight", outcome: "engine-unavailable")
             error = "安装包缺少转录引擎。"; return
         }
-        guard saveEdits() else { return }
+        guard saveEdits() else { queueEvent("transcription-blocked", id: record.id, phase: "save", outcome: "save-failed"); return }
         if selection == record.id { stopPlayback() }
         record = history.first(where: { $0.id == record.id }) ?? record
         let id = record.id
@@ -641,12 +665,20 @@ final class AppState: ObservableObject {
                 record.recoveryMessage = "音频不可用，转录未开始；请检查音频后重试。"
                 do { try update(record); Self.importLog.error("queue_failed version=1 category=invalid_audio"); startNextQueuedTranscription() }
                 catch { self.error = error.localizedDescription }
-            } else { self.error = error.localizedDescription }
+            } else {
+                queueEvent("transcription-blocked", id: record.id, phase: "preflight", outcome: "audio-unavailable")
+                self.error = error.localizedDescription
+            }
             return
         }
+        let wasQueued = record.queuedTranscriptionAt != nil
+        let wasRetry = record.status == .failed || record.status == .interrupted
         record.status = .transcribing; record.recoveryMessage = nil; record.queuedTranscriptionAt = nil
-        do { try update(record) } catch { self.error = error.localizedDescription; return }
+        do { try update(record) }
+        catch { queueEvent("transcription-blocked", id: id, phase: "save", outcome: "save-failed"); self.error = error.localizedDescription; return }
         transcriptionRecordingID = id
+        transcriptionDiagnosticStart = DispatchTime.now().uptimeNanoseconds
+        queueEvent("transcription-start", id: id, phase: "recognition", outcome: wasQueued ? "dequeued" : (wasRetry ? "retry" : "requested"))
         busy = true; elapsed = 0; transcriptPhase = .recognizing
         let generation = UUID(); transcriptionGeneration = generation
         status = "正在本地识别…"
@@ -690,6 +722,7 @@ final class AppState: ObservableObject {
                 latest.speakerAnalysisMessage = "正文已保存，正在区分发言人。"
                 try update(latest)
                 textCommitted = true
+                queueEvent("transcript-saved", id: id, phase: "save", outcome: "success")
                 if selection == id { text = latest.text }
                 var failures = 0
                 for (index, url) in urls.enumerated() where !outputs[index].text.isEmpty {
@@ -729,10 +762,12 @@ final class AppState: ObservableObject {
                 if failures == 0 { analyzed.speakerAnalysisMessage = hasPendingTiming ? "部分文字时间待对齐，正文与已确认的发言人已保留。" : hasLegacy ? "新增录音已分人；原有正文需重新识别后才能分人。" : "最多区分4位发言人；续录标签独立，可手动改名或合并。重叠与不确定片段请核对。" }
                 analyzed.seconds = Date().timeIntervalSince(start)
                 try update(analyzed)
+                queueEvent("transcription-finished", id: id, phase: "analysis", outcome: analyzed.speakerAnalysisStatus == .completed ? "success" : "partial", elapsed: transcriptionDiagnosticStart.map { QueueDiagnostics.elapsed(since: $0) })
                 transcriptPhase = .completed
                 status = "\(appending && latest.audioFiles.count > 1 ? "续录转写已追加" : "转录完成") · 用时 \(Int(analyzed.seconds)) 秒 · 已保存到本机"
 
             } catch is CancellationError {
+                queueEvent("transcription-finished", id: id, phase: textCommitted ? "analysis" : "recognition", outcome: "cancelled", elapsed: transcriptionDiagnosticStart.map { QueueDiagnostics.elapsed(since: $0) })
                 if textCommitted {
                     saveEdits()
                     if var latest = try? library.load(id) {
@@ -746,6 +781,7 @@ final class AppState: ObservableObject {
                     status = "已取消转录，音频和已有文本已保留"
                 }
             } catch {
+                queueEvent("transcription-finished", id: id, phase: textCommitted ? "analysis" : "recognition", outcome: "failed", elapsed: transcriptionDiagnosticStart.map { QueueDiagnostics.elapsed(since: $0) })
                 if textCommitted {
                     saveEdits()
                     if var latest = try? library.load(id) {
@@ -764,6 +800,8 @@ final class AppState: ObservableObject {
             transcriptionGeneration = nil
             timer?.invalidate(); timer = nil; busy = false; self.engine = nil; task = nil
             transcriptionRecordingID = nil
+            transcriptionDiagnosticStart = nil
+            if history.first(where: { $0.id == id })?.status != .failed { queueDiagnosticIDs.removeValue(forKey: id) }
             if textCommitted, let completed = try? library.load(id) { hotwords.extract(from: completed.text) }
             startNextQueuedTranscription()
         }
@@ -785,10 +823,11 @@ final class AppState: ObservableObject {
                 do { try update(next) }
                 catch { self.error = error.localizedDescription; return }
                 Self.importLog.error("queue_failed version=1 category=invalid_audio")
+                queueEvent("queue-failed", id: next.id, phase: "preflight", outcome: "audio-unavailable")
                 continue
             }
             // A missing shared model or engine pauses the whole queue, without misclassifying every recording as failed.
-            guard speechModels.ready else { return }
+            guard speechModels.ready else { queueEvent("queue-wait", id: next.id, phase: "preflight", outcome: "model-unavailable"); return }
             transcribe(recordingID: next.id)
             return
         }

@@ -6,7 +6,7 @@ final class WorkerLogCapture: @unchecked Sendable {
     let pipe = Pipe()
     private let mirror: FileHandle
     private let stage: String
-    private let workerID = UUID().uuidString
+    private let workerID = String(UUID().uuidString.prefix(8))
     private let finished = DispatchSemaphore(value: 0)
     private let journal: FeedbackDiagnostics
 
@@ -22,16 +22,15 @@ final class WorkerLogCapture: @unchecked Sendable {
                 journal.record("worker-output", "capture-end", fields: ["stage": stage, "workerID": workerID])
                 try? pipe.fileHandleForReading.close(); finished.signal()
             }
+            var byteCount = 0
             while true {
                 let bytes = pipe.fileHandleForReading.availableData
                 if bytes.isEmpty { break }
                 do { try mirror.write(contentsOf: bytes) }
-                catch { journal.record("worker-output", "mirror-write-failed", fields: ["stage": stage, "workerID": workerID, "error": String(describing: error)]) }
-                for offset in stride(from: 0, to: bytes.count, by: 32_768) {
-                    let part = bytes.subdata(in: offset..<min(offset + 32_768, bytes.count))
-                    journal.record("worker-output", "bytes", fields: ["stage": stage, "workerID": workerID, "base64": part.base64EncodedString()])
-                }
+                catch { journal.record("worker-output", "mirror-write-failed", fields: ["stage": stage, "workerID": workerID]) }
+                byteCount += bytes.count
             }
+            journal.record("worker-output", "summary", fields: ["stage": stage, "workerID": workerID, "bytesCount": byteCount])
         }
     }
 

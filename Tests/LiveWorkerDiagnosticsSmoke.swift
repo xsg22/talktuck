@@ -27,12 +27,11 @@ final class DiagnosticEvents: @unchecked Sendable {
         await session.finish()
         precondition(events.contains("partial") && events.contains("done"))
         let rows = try journal.snapshot().split(separator: 10).map { try JSONSerialization.jsonObject(with: Data($0)) as! [String: Any] }
-        let data = rows.reduce(into: Data()) { result, row in
-            if let fields = row["fields"] as? [String: Any], let encoded = fields["base64"] as? String,
-               let bytes = Data(base64Encoded: encoded) { result.append(bytes) }
-        }
-        precondition(String(decoding: data, as: UTF8.self).contains("worker-diagnostic"))
-        precondition(!String(decoding: data, as: UTF8.self).contains("synthetic words"))
-        print("PASS: live transcript protocol remains intact; worker stderr enters the feedback journal")
+        let summary = rows.first { $0["event"] as? String == "summary" }
+        precondition((summary?["fields"] as? [String: Any])?["bytesCount"] as? Int == "worker-diagnostic\n".utf8.count)
+        let exported = try journal.safeSnapshot()
+        precondition(!String(decoding: exported, as: UTF8.self).contains("synthetic words"))
+        precondition(!String(decoding: exported, as: UTF8.self).contains("worker-diagnostic"))
+        print("PASS: live transcript protocol remains intact; worker stderr is summarized without exposing contents")
     }
 }

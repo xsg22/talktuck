@@ -18,13 +18,14 @@ import Foundation
         let expected = try Data(contentsOf: logURL)
         let snapshot = try journal.snapshot()
         let rows = try snapshot.split(separator: 10).map { try JSONSerialization.jsonObject(with: Data($0)) as! [String: Any] }
-        let reconstructed = rows.dropFirst().reduce(into: Data()) { result, row in
-            if let fields = row["fields"] as? [String: Any], let encoded = fields["base64"] as? String,
-               let bytes = Data(base64Encoded: encoded) { result.append(bytes) }
-        }
-        precondition(expected == reconstructed && expected.count == 200_022)
+        let summary = rows.first { $0["event"] as? String == "summary" }
+        precondition((summary?["fields"] as? [String: Any])?["bytesCount"] as? Int == expected.count && expected.count == 200_022)
+        precondition(!String(decoding: snapshot, as: UTF8.self).contains("base64"))
+        journal.record("worker-output", "bytes", fields: ["base64": Data("secret-text".utf8).base64EncodedString()])
+        let exported = try journal.safeSnapshot()
+        precondition(!String(decoding: exported, as: UTF8.self).contains("base64"))
         let expired = try journal.snapshot(since: Date().addingTimeInterval(60))
         precondition(expired.split(separator: 10).count == 1)
-        print("PASS: complete stdout/stderr capture, large output, mirror and time boundary")
+        print("PASS: bounded worker summary, mirror preserved, legacy bytes excluded from feedback")
     }
 }

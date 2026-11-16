@@ -87,4 +87,29 @@ final class FeedbackDiagnostics: @unchecked Sendable {
             return result
         }
     }
+    /// Export only structured fields; older journals may contain raw worker output or free text.
+    func safeSnapshot(since cutoff: Date = Date().addingTimeInterval(-24 * 3600)) throws -> Data {
+        let raw = try snapshot(since: cutoff)
+        let components: Set<String> = ["diagnostics", "import-queue", "transcription-engine", "worker-output", "app", "recording", "processing", "transcription"]
+        let allowedEvents: [String: Set<String>] = [
+            "diagnostics": ["snapshot"], "import-queue": ["import-accepted", "copy-start", "import-saved", "import-failed", "queue-failed", "queue-wait", "transcription-blocked", "transcription-start", "transcript-saved", "transcription-finished"],
+            "transcription-engine": ["stage-start", "stage-exit", "launch-failed"], "worker-output": ["capture-start", "capture-end", "drain-timeout", "mirror-write-failed", "summary"],
+            "app": ["launch", "error-state-changed"], "recording": ["active-changed", "pause-changed"], "processing": ["busy-changed"], "transcription": ["phase-changed"]]
+        let fields: Set<String> = ["schema", "platform", "build", "operation", "phase", "outcome", "queueDepth", "dropped", "elapsedMs", "stage", "engine", "streaming", "domain", "code", "status", "active", "busy", "paused", "hasError", "workerID", "bytesCount", "windowHours", "retainedFileLimit", "fileSizeLimitBytes", "possiblyTruncated", "incompleteWorkerCaptures", "damagedLogData"]
+        var result = Data()
+        for line in raw.split(separator: 10) {
+            guard let row = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any],
+                  let component = row["component"] as? String, components.contains(component),
+                  let event = row["event"] as? String, allowedEvents[component]?.contains(event) == true else { continue }
+            let original = row["fields"] as? [String: Any] ?? [:]
+            var safeFields = original.filter { fields.contains($0.key) }
+            let allowedStages = ["音频格式转换", "Qwen语音定稿", "语音片段检测", "发言人区分", "发言人与文字对齐", "录音读取", "live-transcription"]
+            if let stage = safeFields["stage"] as? String, !allowedStages.contains(stage) { safeFields.removeValue(forKey: "stage") }
+            if let domain = safeFields["domain"] as? String, !["NSCocoaErrorDomain", "NSPOSIXErrorDomain", "NSURLErrorDomain"].contains(domain) { safeFields.removeValue(forKey: "domain") }
+            let clean: [String: Any] = ["time": row["time"] as? String ?? "", "component": component, "event": event, "fields": safeFields]
+            result.append(try JSONSerialization.data(withJSONObject: clean, options: [.sortedKeys])); result.append(10)
+        }
+        return result
+    }
+
 }

@@ -512,9 +512,9 @@ struct MainView: View {
                     .help(L10n.text("收起为 mini")).accessibilityLabel(L10n.text("收起为 mini"))
             }
             if !state.recording {
-                if state.audio != nil && (state.text.isEmpty || state.current?.pendingAudioFiles.isEmpty == false) {
+                if state.audio != nil && (state.current?.status == .failed || state.text.isEmpty || state.current?.pendingAudioFiles.isEmpty == false) {
                     Button { state.transcribe() } label: {
-                        Label(L10n.text(state.current?.pendingAudioFiles.isEmpty == false ? "继续转录" : "开始转录"), systemImage: "waveform")
+                        Label(L10n.text(state.current?.status == .failed ? "重新转录" : (state.current?.pendingAudioFiles.isEmpty == false ? "继续转录" : "开始转录")), systemImage: "waveform")
                     }.buttonStyle(TalkTuckPrimaryButtonStyle()).disabled(state.locked || state.syncing)
                 } else {
                     Button { state.continueRecording() } label: { Label(L10n.text("继续录音"), systemImage: "mic") }
