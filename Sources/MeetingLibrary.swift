@@ -100,6 +100,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     /// capture session UUID -> 托管音频文件名，与音频登记同一次原子保存。
     var importedCaptureSessions: [String: String] = [:]
     var status: MeetingStatus = .completed
+    var queuedTranscriptionAt: Date? = nil
     var isStarred = false
     var groupID: UUID? = nil
     var userId: UUID? = nil
@@ -159,7 +160,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case identitySchemaVersion, groupID, customSpeakerNameIDs, userId, syncContent, syncedAudio, source, transcriptOrigin
+        case identitySchemaVersion, groupID, customSpeakerNameIDs, userId, syncContent, syncedAudio, source, transcriptOrigin, queuedTranscriptionAt
         case captureWarnings, id, title, created, text, subtitles, language, seconds, duration, notes, summary, isStarred, actionItems, attachments
         case legacyLiveText, liveUtterances, transcriptParagraphs, originalRecognitionCandidates, speakerNames, speakerAliases, speakerAnalysisStatus, speakerAnalysisMessage
         case importedCaptureSessions, transcriptionEngine, previewEngine, pendingAudioFiles, audioDurations, audioFiles, recordingSessionMode, continuousSegmentFiles, status, recoveryMessage, updated, previewText, enhancedNotes, assistantEntries, summaryCitations, enhancedNotesCitations, summaryContextWasTruncated, enhancedNotesContextWasTruncated
@@ -198,6 +199,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
         pendingAudioFiles = try values.decodeIfPresent([String].self, forKey: .pendingAudioFiles) ?? []
         audioDurations = try values.decodeIfPresent([String: Double].self, forKey: .audioDurations) ?? [:]
         status = try values.decodeIfPresent(MeetingStatus.self, forKey: .status) ?? .completed
+        queuedTranscriptionAt = try values.decodeIfPresent(Date.self, forKey: .queuedTranscriptionAt)
         groupID = try values.decodeIfPresent(UUID.self, forKey: .groupID)
         userId = try values.decodeIfPresent(UUID.self, forKey: .userId)
         syncContent = try values.decodeIfPresent(LibrarySyncRecording.self, forKey: .syncContent)
@@ -475,6 +477,26 @@ final class MeetingLibrary {
             throw error
         }
         return destination
+    }
+
+    /// Reserve a managed destination on the library's serial owner; copying happens off the main actor.
+    func importDestination(for id: UUID, source: URL) throws -> URL {
+        let suffix = source.pathExtension.lowercased()
+        guard source.isFileURL, suffix.isEmpty || suffix.allSatisfy({ $0.isLetter || $0.isNumber }) else {
+            throw MeetingLibraryError.unsafeAudioPath
+        }
+        return try audioURL(UUID().uuidString + (suffix.isEmpty ? "" : "." + suffix), meeting: id)
+    }
+
+    /// Publish only after a complete copy. A failed metadata save never publishes a partial record.
+    func registerImportedAudio(_ destination: URL, into record: inout MeetingRecord) throws {
+        let expected = try audioURL(destination.lastPathComponent, meeting: record.id)
+        guard expected.standardizedFileURL == destination.standardizedFileURL,
+              FileManager.default.fileExists(atPath: expected.path) else { throw MeetingLibraryError.missingAudio }
+        let original = record
+        record.audioFiles.append(destination.lastPathComponent)
+        do { record = try save(record) }
+        catch { record = original; throw error }
     }
 
     /// 后台复制完成后才登记；元数据与session去重标记一起保存，失败不遗留半份会议。

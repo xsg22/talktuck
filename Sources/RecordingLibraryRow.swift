@@ -6,6 +6,7 @@ struct RecordingLibraryRow: View {
     let metadata: String
     var groupName: String? = nil
     private var symbol: String {
+        if record.queuedTranscriptionAt != nil { return "clock" }
         if record.status == .completed || record.status == .recorded { return record.stateModel.origin.symbol }
         return record.status == .recording ? "record.circle" : "clock"
     }
@@ -17,6 +18,7 @@ struct RecordingLibraryRow: View {
                 Text(record.title).lineLimit(1).font(.system(size: 14, weight: .medium))
                     .foregroundStyle(selected ? TalkTuckTheme.selectionInk : TalkTuckTheme.ink)
                 HStack(spacing: 6) {
+                    if record.queuedTranscriptionAt != nil { Text(L10n.text("等待转录")) }
                     Text(metadata).lineLimit(1).fixedSize(horizontal: true, vertical: false)
                     if let groupName {
                         Text(groupName)

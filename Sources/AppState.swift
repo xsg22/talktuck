@@ -3,6 +3,7 @@ import Combine
 import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
+import OSLog
 
 typealias Transcript = MeetingRecord
 
@@ -33,6 +34,11 @@ final class AppState: ObservableObject {
         }
     }
     @Published var busy = false
+    @Published private(set) var importingAudioCount = 0
+    private let copyImportedAudio: @Sendable (URL, URL) throws -> Void
+    private var importTail: Task<Void, Never>?
+    private var queuedImportCount = 0
+    private static let importLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.xsg.talktuck", category: "audio-import")
     @Published var recording = false
     @Published var preparing = false
     @Published private(set) var quitting = false
@@ -202,6 +208,7 @@ final class AppState: ObservableObject {
         }
     }
     var locked: Bool { busy || recording || preparing || quitting || recoveryBusy || continuousWorker != nil }
+    var canImportAudio: Bool { !recording && !preparing && !quitting && !recoveryBusy && continuousWorker == nil }
     var canRetryMicrophone: Bool { recording && paused && recorder.canRetryMicrophone }
     var canSyncFinalTranscript: Bool {
         !locked && !syncing && current?.status == .completed && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -218,11 +225,18 @@ final class AppState: ObservableObject {
          dingTalkConnection: DingTalkAccountConnection? = nil, feishuConnection: FeishuAccountConnection? = nil,
          notionConnection: NotionAccountConnection? = nil, recorder: MeetingRecorder? = nil,
          cloudAccount: TalkTuckAccountStore? = nil,
+         copyImportedAudio: @escaping @Sendable (URL, URL) throws -> Void = { source, destination in
+             let fm = FileManager.default
+             try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+             do { try fm.copyItem(at: source, to: destination) }
+             catch { try? fm.removeItem(at: destination); throw error }
+         },
          captureStarter: @escaping @MainActor (MeetingRecorder, MeetingCaptureRequest) async throws -> Void = { recorder, request in
              try await recorder.start(mode: request.mode, directory: request.directory, sessionMode: request.sessionMode,
                  meetingOffset: request.meetingOffset, segmenter: request.segmenter,progressive:request.progressive)
          },
          playbackFactory: @escaping @MainActor (URL) throws -> MeetingAudioPlayer = { try MeetingAudioPlayer(contentsOf: $0) }) {
+        self.copyImportedAudio = copyImportedAudio
         self.captureStarter = captureStarter
         self.playbackFactory = playbackFactory
         self.cloudAccount = cloudAccount ?? TalkTuckAccountStore()
@@ -246,6 +260,9 @@ final class AppState: ObservableObject {
             liveRefinementCacheReady = (try? LiveRefinementCache.prepare()) != nil
         }
         speechModels.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &accountSubscriptions)
+        speechModels.$ready.removeDuplicates().dropFirst().sink { [weak self] ready in
+            if ready { Task { @MainActor [weak self] in self?.startNextQueuedTranscription() } }
+        }.store(in: &accountSubscriptions)
         hotwords.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &accountSubscriptions)
         hotwordSync.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &accountSubscriptions)
         dingTalkAccount.onProgress = { [weak self] message in
@@ -288,6 +305,7 @@ final class AppState: ObservableObject {
         RunLoop.main.add(controlTimer, forMode: .common)
         configureLibrarySync()
         publishRecordingStatus()
+        Task { @MainActor [weak self] in self?.startNextQueuedTranscription() }
         // Isolated previews/tests must opt in by injecting their own account store;
         // never attach the user's real credentials to an arbitrary fixture library.
         if storageURL == nil || cloudAccount != nil { startAccountRestoration() }
@@ -509,7 +527,7 @@ final class AppState: ObservableObject {
     }
 
     func chooseAudio() {
-        guard !locked else { return }
+        guard canImportAudio else { return }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.audio, .mpeg4Audio, .mp3, .wav, .aiff]
         panel.allowsMultipleSelection = false
@@ -532,26 +550,63 @@ final class AppState: ObservableObject {
     }
 
     func useAudio(_ url: URL) {
-        guard !locked, let library, saveEdits() else { return }
-        do {
-            var record = MeetingRecord(title: url.deletingPathExtension().lastPathComponent, language: language, status: .recorded)
-            record.source = .imported
-            _ = try library.importAudio(url, into: &record)
-            try update(record)
-            select(record.id)
-            status = "音频已保存在录音资料库，可以开始转录"
-            let id = record.id
-            Task {
-                if let duration = try? await AVURLAsset(url: url).load(.duration), duration.seconds.isFinite {
-                    if var latest = history.first(where: { $0.id == id }) {
+        guard canImportAudio, let library, saveEdits() else { return }
+        var isDirectory: ObjCBool = false
+        guard url.isFileURL, FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            reportRecoverableError("导入失败：\(MeetingLibraryError.missingAudio.localizedDescription)") { [weak self] in self?.useAudio(url) }
+            return
+        }
+        var record = MeetingRecord(title: url.deletingPathExtension().lastPathComponent, language: language, status: .recorded)
+        if busy || queuedImportCount > 0 { record.queuedTranscriptionAt = Date() }
+        record.source = .imported
+        let destination: URL
+        do { destination = try library.importDestination(for: record.id, source: url) }
+        catch { reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }; return }
+        let securityScoped = url.startAccessingSecurityScopedResource()
+        let predecessor = importTail
+        let copy = copyImportedAudio
+        let originalSelection = selection
+        importingAudioCount += 1
+        if record.queuedTranscriptionAt != nil { queuedImportCount += 1 }
+        Self.importLog.info("import_queued version=1")
+        importTail = Task { [self] in
+            if let predecessor { await predecessor.value }
+            defer {
+                if securityScoped { url.stopAccessingSecurityScopedResource() }
+                importingAudioCount -= 1
+                if record.queuedTranscriptionAt != nil { queuedImportCount -= 1 }
+            }
+            do {
+                try await Task.detached(priority: .utility) {
+                    try copy(url, destination)
+                }.value
+                do { try library.registerImportedAudio(destination, into: &record) }
+                catch { try? FileManager.default.removeItem(at: destination); throw error }
+                publishStoredRecord(record)
+                Self.importLog.info("import_saved version=1 queued=\(record.queuedTranscriptionAt != nil)")
+                if record.queuedTranscriptionAt == nil && !locked && selection == originalSelection {
+                    select(record.id)
+                    status = "音频已保存在录音资料库，可以开始转录"
+                }
+                let id = record.id
+                Task {
+                    if let duration = try? await AVURLAsset(url: destination).load(.duration), duration.seconds.isFinite,
+                       var latest = history.first(where: { $0.id == id }) {
                         latest.duration = duration.seconds
                         do { try update(latest); if selection == id { playbackDuration = duration.seconds } }
                         catch { self.error = error.localizedDescription }
                     }
                 }
+                startNextQueuedTranscription()
+            } catch {
+                Self.importLog.error("import_failed version=1 category=copy_or_save")
+                reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) }
             }
-        } catch { reportRecoverableError("导入失败：\(error.localizedDescription)") { [weak self] in self?.useAudio(url) } }
+        }
     }
+
+    /// Tests and graceful shutdown can wait for all imports accepted so far.
+    func waitForAudioImports() async { await importTail?.value }
 
     func transcribe(recordingID targetID: UUID? = nil) {
         speechModels.refresh()
@@ -579,9 +634,17 @@ final class AppState: ObservableObject {
                 guard let index = record.audioFiles.firstIndex(of: file) else { throw MeetingLibraryError.missingAudio }
                 return all[index]
             }
-            guard !urls.isEmpty else { throw MeetingLibraryError.missingAudio }
-        } catch { self.error = error.localizedDescription; return }
-        record.status = .transcribing; record.recoveryMessage = nil
+            guard !urls.isEmpty, urls.allSatisfy({ FileManager.default.isReadableFile(atPath: $0.path) }) else { throw MeetingLibraryError.missingAudio }
+        } catch {
+            if record.queuedTranscriptionAt != nil {
+                record.queuedTranscriptionAt = nil; record.status = .failed
+                record.recoveryMessage = "音频不可用，转录未开始；请检查音频后重试。"
+                do { try update(record); Self.importLog.error("queue_failed version=1 category=invalid_audio"); startNextQueuedTranscription() }
+                catch { self.error = error.localizedDescription }
+            } else { self.error = error.localizedDescription }
+            return
+        }
+        record.status = .transcribing; record.recoveryMessage = nil; record.queuedTranscriptionAt = nil
         do { try update(record) } catch { self.error = error.localizedDescription; return }
         transcriptionRecordingID = id
         busy = true; elapsed = 0; transcriptPhase = .recognizing
@@ -694,6 +757,7 @@ final class AppState: ObservableObject {
                 } else {
                     finishFailedTranscription(id: id, cancelled: false); transcriptPhase = .failed
                     reportRecoverableError(error.localizedDescription) { [weak self] in self?.transcribe(recordingID: id) }
+                    errorMeetingID = id
                     status = "转录失败，可重试"
                 }
             }
@@ -701,6 +765,32 @@ final class AppState: ObservableObject {
             timer?.invalidate(); timer = nil; busy = false; self.engine = nil; task = nil
             transcriptionRecordingID = nil
             if textCommitted, let completed = try? library.load(id) { hotwords.extract(from: completed.text) }
+            startNextQueuedTranscription()
+        }
+    }
+
+    func startNextQueuedTranscription() {
+        guard !locked, let library else { return }
+        while var next = history.filter({ $0.queuedTranscriptionAt != nil }).min(by: {
+            ($0.queuedTranscriptionAt ?? .distantFuture, $0.id.uuidString) < ($1.queuedTranscriptionAt ?? .distantFuture, $1.id.uuidString)
+        }) {
+            do {
+                let urls = try library.audioURLs(for: next)
+                guard !urls.isEmpty, urls.allSatisfy({ FileManager.default.isReadableFile(atPath: $0.path) }) else {
+                    throw MeetingLibraryError.missingAudio
+                }
+            } catch {
+                next.queuedTranscriptionAt = nil; next.status = .failed
+                next.recoveryMessage = "音频不可用，转录未开始；请检查音频后重试。"
+                do { try update(next) }
+                catch { self.error = error.localizedDescription; return }
+                Self.importLog.error("queue_failed version=1 category=invalid_audio")
+                continue
+            }
+            // A missing shared model or engine pauses the whole queue, without misclassifying every recording as failed.
+            guard speechModels.ready else { return }
+            transcribe(recordingID: next.id)
+            return
         }
     }
 
@@ -831,6 +921,7 @@ final class AppState: ObservableObject {
             }
             preparing = false
             if recording, activeRecordingSessionMode == .continuous { processNextContinuousSegment() }
+            if !recording { startNextQueuedTranscription() }
         }
     }
 
@@ -1060,6 +1151,7 @@ final class AppState: ObservableObject {
                     if let stoppedID { transcribe(recordingID: stoppedID) }
                 }
             }
+            if finalize { startNextQueuedTranscription() }
         }
     }
 
@@ -1108,6 +1200,7 @@ final class AppState: ObservableObject {
             }
             progressiveGeneration=nil;progressiveSession=nil;busy=false;transcriptionRecordingID=nil;progressiveFinishTask=nil
             if succeeded,let remaining=history.first(where:{$0.id==id}),!remaining.pendingAudioFiles.isEmpty { transcribe(recordingID:id) }
+            else { startNextQueuedTranscription() }
         }
     }
 
@@ -1244,6 +1337,7 @@ final class AppState: ObservableObject {
             continuousWorker = nil; continuousWorkerEngine = nil
             processNextContinuousSegment()
             finishContinuousIfDrained()
+            startNextQueuedTranscription()
         }
     }
 
@@ -1794,7 +1888,7 @@ final class AppState: ObservableObject {
 
     /// 等待真正的取消处理收尾，避免退出时留下推理子进程或未保存的正文。
     func cancelTranscriptionAndSaveForQuit() async -> Bool {
-        guard !recording, !preparing, !recoveryBusy, !syncing, !dingTalkAccount.busy, !notionAccount.busy, !feishuAccount.busy else { return false }
+        guard importingAudioCount == 0, !recording, !preparing, !recoveryBusy, !syncing, !dingTalkAccount.busy, !notionAccount.busy, !feishuAccount.busy else { return false }
         quitting = true
         defer { quitting = false }
         let pending = task
@@ -1813,7 +1907,7 @@ final class AppState: ObservableObject {
 
     func prepareToQuit() -> Bool {
         if quitting || quitPromptVisible { return false }
-        let activity = QuitActivity.resolve(recording: recording, preparing: preparing, transcribing: busy || continuousWorker != nil, recovering: recoveryBusy,
+        let activity = QuitActivity.resolve(recording: recording, preparing: preparing, importing: importingAudioCount > 0, transcribing: busy || continuousWorker != nil, recovering: recoveryBusy,
             externalTask: syncing || dingTalkAccount.busy || notionAccount.busy || feishuAccount.busy)
         if activity == .idle { stopPlayback(); return saveBeforeQuit() }
         quitPromptVisible = true

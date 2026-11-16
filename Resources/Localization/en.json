@@ -275,7 +275,7 @@
   "正在实时识别": "Transcribing live",
   "正在生成最终文字": "Generating final transcript",
   "转录已保存": "Transcript saved",
-  "等待转录": "Waiting for transcription",
+  "等待转录": "Queued for transcription",
   "麦克风可能已断开。重新连接后点击“重试并继续”；已有录音会保留。": "The microphone may be disconnected. Reconnect it and choose Retry & resume. Existing audio is preserved.",
   "采集已暂停，已有文字保留；继续后接着记录。": "Capture is paused. Saved text is preserved; resume to continue.",
   "已有原轨保留，请停止并保存后检查输入设备。": "Original tracks are preserved. Stop and save, then check your input device.",
@@ -1255,5 +1255,9 @@
   "核对接缝文字保全": "Checking seam text preservation",
   "录音已保存": "Recording saved",
   "录音已停止并保存。": "Recording has stopped and is saved.",
-  "录音已停止并保存。部分转录尚未完成，可继续转录；原音、已有定稿与重试位置均已保留。": "Recording has stopped and is saved. Some transcription is pending and can be continued. Original audio, finalized text and retry positions are preserved."
+  "录音已停止并保存。部分转录尚未完成，可继续转录；原音、已有定稿与重试位置均已保留。": "Recording has stopped and is saved. Some transcription is pending and can be continued. Original audio, finalized text and retry positions are preserved.",
+  "等待转录，": "Queued for transcription, ",
+  "正在导入音频": "Importing audio",
+  "请等待音频导入完成后再退出，原始文件会保留。": "Wait for audio imports to finish before quitting. Original files are preserved.",
+  "音频不可用，转录未开始；请检查音频后重试。": "Audio is unavailable, so transcription did not start. Check the audio and retry."
 }

@@ -3,7 +3,7 @@ import AVFoundation
 
 @main
 struct AppStateSmoke {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? NSTemporaryDirectory(), isDirectory: true).appendingPathComponent("talktuck-state-test-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -82,6 +82,7 @@ struct AppStateSmoke {
         buffer.floatChannelData![0].initialize(repeating: 0, count: 1600)
         do { let writer = try AVAudioFile(forWriting: retryAudio, settings: format.settings); try writer.write(from: buffer) }
         state.retryLastError()
+        await state.waitForAudioImports()
         precondition(state.error == nil && state.errorRetry == nil && state.history.count == 2)
         precondition(state.current?.title == "稍后可用" && FileManager.default.fileExists(atPath: retryAudio.path))
         let importedID = state.selection

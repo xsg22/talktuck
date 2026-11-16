@@ -2,8 +2,9 @@ import Foundation
 
 /// 不将录音、保存、推理和远端写入混成一个不可操作的“仍有任务”。
 enum QuitActivity: Equatable {
-    case idle, recording, transcribing, saving, recovering, external
-    static func resolve(recording: Bool, preparing: Bool, transcribing: Bool, recovering: Bool = false, externalTask: Bool) -> Self {
+    case idle, recording, transcribing, saving, recovering, importing, external
+    static func resolve(recording: Bool, preparing: Bool, importing: Bool = false, transcribing: Bool, recovering: Bool = false, externalTask: Bool) -> Self {
+        if importing { return .importing }
         if recovering { return .recovering }
         if externalTask { return .external }
         if preparing { return .saving }
@@ -13,6 +14,7 @@ enum QuitActivity: Equatable {
     }
     var title: String {
         switch self {
+        case .importing: return "正在导入音频"
         case .idle: return "退出 TalkTuck"
         case .recording: return "保存录音后退出？"
         case .transcribing: return "取消转录并退出？"
@@ -23,6 +25,7 @@ enum QuitActivity: Equatable {
     }
     var detail: String {
         switch self {
+        case .importing: return "请等待音频导入完成后再退出，原始文件会保留。"
         case .recording: return "录音仍在进行。保存成功后才会退出；已有文字和音频会保留。"
         case .transcribing: return "音频和已有正文会保留。等待转录任务取消并保存后退出，下次打开可重试未完成片段。"
         case .recovering: return "请等待恢复保存完成，或在恢复窗口取消后再退出；原始音轨会保留。"

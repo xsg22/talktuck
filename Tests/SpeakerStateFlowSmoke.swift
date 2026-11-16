@@ -8,6 +8,7 @@ import Foundation
         let state = AppState(storageURL: root, connectionNamespace: "state-flow-" + UUID().uuidString)
         precondition(state.model != nil, "本测试必须运行在带模型资源的测试bundle中")
         state.useAudio(source)
+        await state.waitForAudioImports()
         state.transcribe()
         var edited = false
         let deadline = Date().addingTimeInterval(180)

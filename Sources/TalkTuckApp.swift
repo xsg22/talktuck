@@ -65,7 +65,7 @@ struct TalkTuckApp: App {
         .defaultSize(width: 1440, height: 900)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button(L10n.text("导入音频…")) { state.chooseAudio() }.keyboardShortcut("o").disabled(state.locked)
+                Button(L10n.text("导入音频…")) { state.chooseAudio() }.keyboardShortcut("o").disabled(!state.canImportAudio)
             }
             CommandGroup(replacing: .saveItem) {
                 Button(L10n.text("导出转录 Markdown…")) { state.export(kind: "Markdown") }.keyboardShortcut("s").disabled(state.current == nil)
@@ -146,6 +146,7 @@ struct MainView: View {
                     .overlay(RoundedRectangle(cornerRadius: 9).stroke(TalkTuckTheme.border))
                 HStack {
                     Text(L10n.text("录音资料库")).font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                    if state.importingAudioCount > 0 { Text(L10n.text("正在导入音频")).font(AppTypography.secondary).foregroundStyle(.secondary) }
                     Spacer()
                     Button(L10n.text(batchMode ? "完成" : "选择")) { batchMode.toggle(); batchIDs = [] }.buttonStyle(.plain).font(AppTypography.secondary).disabled(state.locked || filter == "回收站").accessibilityLabel(L10n.text(batchMode ? "完成批量整理" : "批量整理"))
                     Menu {
@@ -169,7 +170,7 @@ struct MainView: View {
                                 .contentShape(Rectangle())
                                 .contextMenu { recordingMenu(record) }
                         }.accessibilityAddTraits(state.selection == record.id ? .isSelected : [])
-                            .accessibilityLabel(record.title + ", " + L10n.text(record.status == .completed ? "已完成，" : "待处理，") + libraryMetadata(record) + (state.organization.group(record.groupID).map { ", " + $0.name } ?? ""))
+                            .accessibilityLabel(record.title + ", " + L10n.text(record.queuedTranscriptionAt != nil ? "等待转录，" : (record.status == .completed ? "已完成，" : "待处理，")) + libraryMetadata(record) + (state.organization.group(record.groupID).map { ", " + $0.name } ?? ""))
                     }
                     }
                 }.focusable().focusEffectDisabled().onMoveCommand { direction in
@@ -524,7 +525,7 @@ struct MainView: View {
                 .disabled(state.current == nil)
             Menu {
                 Button(L10n.text(state.editingTranscript ? "完成全文编辑" : "编辑全文")) { state.editingTranscript.toggle() }.disabled(state.locked)
-                Button(L10n.text("导入音频…")) { state.chooseAudio() }.disabled(state.locked)
+                Button(L10n.text("导入音频…")) { state.chooseAudio() }.disabled(!state.canImportAudio)
                 Menu(L10n.text("录音设置")) {
                     Picker(L10n.text("音源"), selection: $state.recordingMode) { ForEach(MeetingRecordingMode.allCases) { Text($0.title).tag($0) } }
                     Picker(L10n.text("转录语言"), selection: $state.language) { ForEach(TranscriptionLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
@@ -609,7 +610,7 @@ struct MainView: View {
             .id(appLanguage.effective).disabled(state.locked)
             .help(L10n.text("录音设置")).accessibilityLabel(L10n.text("录音设置"))
             HStack(alignment: .top, spacing: 14) {
-                Button { state.chooseAudio() } label: { homeChoice("导入音频", detail: "支持 MP3、M4A、WAV\n常用音频格式", symbol: "doc.badge.plus") }.disabled(state.locked)
+                Button { state.chooseAudio() } label: { homeChoice("导入音频", detail: "支持 MP3、M4A、WAV\n常用音频格式", symbol: "doc.badge.plus") }.disabled(!state.canImportAudio)
                 Button { state.recordingMode = .systemAudio; state.toggleRecording() } label: { homeChoice("录制系统声音", detail: "录制线上会议、视频\n或电脑播放的声音", symbol: "desktopcomputer") }.disabled(state.locked || state.syncing)
             }
             .buttonStyle(.plain)
@@ -617,7 +618,7 @@ struct MainView: View {
         }.padding(4)
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(targeted ? accent : .clear, lineWidth: 2))
             .onDrop(of: [.fileURL], isTargeted: $targeted) { providers in
-                guard !state.locked, let provider = providers.first else { return false }
+                guard state.canImportAudio, let provider = providers.first else { return false }
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in if let url { Task { @MainActor in state.useAudio(url) } } }
                 return true
             }

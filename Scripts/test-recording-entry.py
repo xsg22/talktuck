@@ -7,7 +7,7 @@ tests=['AgentDataSmoke','LibrarySmoke','AppStateSmoke','SpeakerEditingSmoke','Me
 texts=[]
 for test in tests:
     texts.append(Path('Tests/'+test+'.swift').read_text().replace('@main',''))
-texts.append('@main struct RegressionMain { @MainActor static func main() async throws { '+ '; '.join(('try await ' if t in ['QuitFlowSmoke','RecorderSmoke','CapturePolishSmoke','ParagraphPlaybackSmoke','MiniRecordingSmoke','ContinuousRecordingSmoke','LiveSourceSwitchSmoke','RecordingBrowsingSmoke','ASRModelDownloadSmoke'] else 'try ')+t+'.main()' for t in tests)+' } }')
+texts.append('@main struct RegressionMain { @MainActor static func main() async throws { '+ '; '.join(('try await ' if t in ['AppStateSmoke','QuitFlowSmoke','RecorderSmoke','CapturePolishSmoke','ParagraphPlaybackSmoke','MiniRecordingSmoke','ContinuousRecordingSmoke','LiveSourceSwitchSmoke','RecordingBrowsingSmoke','ASRModelDownloadSmoke'] else 'try ')+t+'.main()' for t in tests)+' } }')
 Path('.build/RecordingEntryRegression.swift').write_text('\n'.join(texts))
 subprocess.run(['xcrun','swiftc','-warnings-as-errors','-swift-version','5','-parse-as-library','-target','arm64-apple-macosx14.0',*sources,'.build/TestAppTypes.swift','.build/RecordingEntryRegression.swift','-o','.build/recording-entry-regression'],check=True)
 subprocess.run(['.build/recording-entry-regression'],check=True)
