@@ -4,7 +4,7 @@ import os
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['TOKENIZERS_PARALLELISM']='false'
-import hashlib,json,math,pathlib,struct,sys,wave,os,unicodedata
+import collections,hashlib,json,math,pathlib,struct,sys,wave,os,unicodedata
 from language_policy import recognition_language, alignment_language
 from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, token_budget, RATE
 
@@ -97,23 +97,36 @@ def stream_clips(max_seconds=MAX_ASR_SECONDS):
 class SeamAmbiguous(TokenLimitReached):
     pass
 
+class RepetitionDetected(TokenLimitReached):
+    pass
+
+def suspicious_repetition(text):
+    """Reject suspicious decoder loops during recovery; never delete words."""
+    value=''.join(c.casefold() for c in text if unicodedata.category(c)[0] in 'LN')
+    if len(value)<24:return False
+    counts=collections.Counter(value[i:i+4] for i in range(len(value)-3))
+    return max(counts.values(),default=0)>=max(7,math.ceil(len(value)*.06))
+
 def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False,_budget=None):
     try:
         generated=generate_complete(model,audio,language=language,hotwords=hotwords)
-    except TokenLimitReached:
+        if _budget is not None and suspicious_repetition(generated.text):
+            raise RepetitionDetected('Transcript token limit reached; suspicious repeated decoding; partial result not saved')
+    except TokenLimitReached as failure:
         # Dense but normal speech can need more tokens without needing a seam.
         base=token_budget(len(audio)/RATE);expanded=min(8192,max(1024,base*2))
-        if expanded>base:
+        if expanded>base and not isinstance(failure,RepetitionDetected):
             try:
                 generated=generate_complete(model,audio,language=language,hotwords=hotwords,token_limit=expanded)
             except TokenLimitReached:
                 generated=None
+            if generated is not None and suspicious_repetition(generated.text):generated=None
             if generated is not None:
                 print('Qwen3-ASR: token limit recovered with bounded extended decoding',file=sys.stderr,flush=True)
                 return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
         # Prefer a quiet point near the middle, with real overlapping context.
         # Bound recursion so a looping decoder cannot run indefinitely.
-        if len(audio)<4*RATE:
+        if len(audio)<2*RATE:
             raise
         middle=len(audio)//2; step=RATE//10
         radius=min(2*RATE,len(audio)//4)
@@ -122,13 +135,13 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
         for candidate in candidates:
             if all(abs(candidate-other)>=RATE//2 for other in cuts):cuts.append(candidate)
             if len(cuts)==5:break
-        budget=_budget if _budget is not None else [16]
+        budget=_budget if _budget is not None else [32]
         print('Qwen3-ASR: token limit; retrying bounded subwindows',file=sys.stderr,flush=True)
         for cut in cuts:
             if budget[0]<=0:raise SeamAmbiguous('Transcript token limit reached; seam retry budget exhausted; partial result not saved')
             budget[0]-=1
             try:return recover_split(model,audio,start,end,language,hotwords,cut,budget)
-            except SeamAmbiguous:continue
+            except (SeamAmbiguous,RepetitionDetected):continue
         raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
     return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
 
@@ -192,6 +205,8 @@ def recover_split(model,audio,start,end,language,hotwords,cut,budget):
                 pieces[0]=dict(pieces[0],text=' '+pieces[0]['text'])
             parts.extend(pieces)
         segment=dict(text=''.join(p['text'] for p in parts),start=start,end=end)
+        if suspicious_repetition(segment['text']):
+            raise SeamAmbiguous('Transcript token limit reached; suspicious repeated decoding; partial result not saved')
         if parts:segment['alignmentParts']=parts
         return segment
 

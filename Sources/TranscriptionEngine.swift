@@ -4,7 +4,18 @@ import Darwin
 
 enum TranscriptionError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case let .message(message) = self { return message }; return nil }
+    case unsafeRecovery
+    var errorDescription: String? {
+        switch self {
+        case let .message(message): return message
+        case .unsafeRecovery: return L10n.text("部分音频暂时无法可靠识别。原录音和已有文字已保留，请检查音频后重试。")
+        }
+    }
+    static func workerFailure(stage:String, status:Int32, details:String) -> TranscriptionError {
+        let text=details.lowercased()
+        if ["seam retry budget exhausted","overlap could not be reconciled","suspicious repeated decoding"].contains(where: { text.contains($0) }) { return .unsafeRecovery }
+        return .message("\(stage)失败（代码 \(status)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+    }
 }
 
 private struct HotwordHints: Encodable { let words: [String]; let context: String; var recoverRepeatedOutput = false }
@@ -102,7 +113,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         if wasCancelled { throw CancellationError() }
         guard child.terminationStatus == 0 else {
             let details = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-            throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+            throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
         }
     }
 
@@ -156,13 +167,13 @@ final class TranscriptionEngine: @unchecked Sendable {
             let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
             let broken = (ns.domain == NSPOSIXErrorDomain && ns.code == Int(EPIPE)) || (underlying?.domain == NSPOSIXErrorDomain && underlying?.code == Int(EPIPE))
             if broken, let details = try? String(contentsOf: logURL, encoding: .utf8), !details.isEmpty {
-                throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+                throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
             }
             throw feedError
         }
         guard child.terminationStatus == 0 else {
             let details = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-            throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+            throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
         }
     }
 
@@ -345,7 +356,11 @@ final class TranscriptionEngine: @unchecked Sendable {
         throw last
     }
     static func isRecoverableWindowFailure(_ error:Error)->Bool {
+        if let value=error as? TranscriptionError,case .unsafeRecovery=value { return false }
         let message=error.localizedDescription.lowercased()
+        // A smaller whole-file pass must not bypass a local safety decision
+        // and publish suspected repetition or an unresolved boundary.
+        if ["seam retry budget exhausted","overlap could not be reconciled","suspicious repeated decoding"].contains(where: { message.contains($0) }) { return false }
         return ["transcript token limit reached","memory limit","out of memory","failed to allocate"].contains{message.contains($0)}
     }
     func transcribe(audio: URL, model: URL, executable: URL, language: String, hotwords: [String] = [], context: String = "", offlineWindows: Bool = false, windowSeconds:Int? = nil, overlapSeconds:Int? = nil, recoverRepeatedOutput:Bool = false, checkpointDirectory: URL? = nil) throws -> TranscriptionOutput {
