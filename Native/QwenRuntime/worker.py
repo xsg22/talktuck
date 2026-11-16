@@ -6,7 +6,7 @@ os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['TOKENIZERS_PARALLELISM']='false'
 import json,math,pathlib,struct,sys,wave
 from language_policy import recognition_language, alignment_language
-from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory
+from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, RATE
 
 def select_hotwords(words, context, limit=12):
     matched=[w for w in words if w.casefold() in context.casefold()]
@@ -95,7 +95,31 @@ def stream_clips(max_seconds=MAX_ASR_SECONDS):
         yield item,data
 
 def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False):
-    generated=generate_complete(model,audio,language=language,hotwords=hotwords)
+    try:
+        generated=generate_complete(model,audio,language=language,hotwords=hotwords)
+    except TokenLimitReached:
+        # Keep each sample exactly once; prefer a quiet point near the middle.
+        # Bound recursion so a looping decoder cannot run indefinitely.
+        if len(audio)<4*RATE:
+            raise
+        middle=len(audio)//2; step=RATE//10
+        radius=min(2*RATE,len(audio)//4)
+        candidates=range(middle-radius,middle+radius+1,step)
+        cut=min(candidates,key=lambda n:(sum(float(x)*float(x) for x in audio[n-step//2:n+step//2]),abs(n-middle)))
+        print('Qwen3-ASR: token limit; retrying bounded subwindows',file=sys.stderr,flush=True)
+        # Do not discard repeat-recovery candidates belonging to a child.
+        left=recognized_segment(model,audio[:cut],start=start,end=start+cut/RATE,language=language,hotwords=hotwords)
+        right=recognized_segment(model,audio[cut:],start=start+cut/RATE,end=end,language=language,hotwords=hotwords)
+        parts=[]
+        for child in (left,right):
+            if not child['text']:continue
+            pieces=child.get('alignmentParts') or [dict(text=child['text'],start=child['start'],end=child['end'])]
+            if parts and parts[-1]['text'][-1:].isascii() and not parts[-1]['text'][-1:].isspace() and pieces[0]['text'][:1].isascii() and pieces[0]['text'][:1].isalnum():
+                pieces[0]=dict(pieces[0],text=' '+pieces[0]['text'])
+            parts.extend(pieces)
+        segment=dict(text=''.join(p['text'] for p in parts),start=start,end=end)
+        if parts:segment['alignmentParts']=parts
+        return segment
     text=generated.text.strip();segment=dict(text=text,start=start,end=end)
     if text and recover_repeats:
         from repeat_recovery import recover
