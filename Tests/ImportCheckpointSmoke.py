@@ -1,4 +1,4 @@
-import json,pathlib,sys,tempfile,types,unittest
+import json,os,pathlib,sys,tempfile,types,unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'Native/QwenRuntime'))
@@ -30,11 +30,21 @@ class CheckpointSmoke(unittest.TestCase):
             self.assertEqual((cache/'00000000.json').stat().st_mode & 0o777,0o600)
             calls.clear();(cache/'00000001.json').write_text('{broken');run()
             self.assertEqual(calls,[1])
+            calls.clear();entry=cache/'00000000.json';value=json.loads(entry.read_text());value['segment']['text']='tampered';entry.write_text(json.dumps(value));run()
+            self.assertEqual(calls,[0])
             calls.clear();clips[1]=(clips[1][0],b'x'*64000);run()
             self.assertEqual(calls,[1])
             calls.clear();hints.write_text('{"words":[],"context":"changed"}');run()
             self.assertEqual(calls,[0,1,2])
             calls.clear();(model/'weights').write_text('new model contents');run()
             self.assertEqual(calls,[0,1,2])
+            calls.clear();weights=model/'weights';before=weights.stat()
+            weights.write_text('X'*before.st_size);os.utime(weights,ns=(before.st_atime_ns,before.st_mtime_ns));run()
+            self.assertEqual(calls,[0,1,2])
+            code=root/'code';code.mkdir();script=code/'worker.py';script.write_text('version one')
+            with patch.object(worker,'__file__',str(script)):
+                calls.clear();run();self.assertEqual(calls,[0,1,2])
+                calls.clear();run();self.assertEqual(calls,[])
+                script.write_text('version two');calls.clear();run();self.assertEqual(calls,[0,1,2])
 
 if __name__=='__main__':unittest.main()

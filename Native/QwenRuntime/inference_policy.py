@@ -34,8 +34,11 @@ def validate_clip(item,max_seconds=MAX_ASR_SECONDS):
         or abs(frames-round((end-start)*RATE))>1):
         raise ValueError('Invalid clip metadata or incomplete audio coverage')
 
-def generate_complete(model,audio,*,language,hotwords=None):
-    duration=len(audio)/RATE;limit=token_budget(duration)
+def generate_complete(model,audio,*,language,hotwords=None,token_limit=None):
+    duration=len(audio)/RATE;base=token_budget(duration)
+    limit=base if token_limit is None else token_limit
+    if isinstance(limit,bool) or not isinstance(limit,int) or not base<=limit<=8192:
+        raise ValueError('Invalid local ASR token limit')
     result=model.generate(audio=audio,language=language,hotwords=hotwords,max_tokens=limit,temperature=0,
         chunk_duration=MAX_ASR_SECONDS+1,min_chunk_duration=.1,repetition_penalty=1.05,verbose=False)
     if result.generation_tokens>=limit:

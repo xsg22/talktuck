@@ -6,7 +6,7 @@ os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['TOKENIZERS_PARALLELISM']='false'
 import hashlib,json,math,pathlib,struct,sys,wave,os,unicodedata
 from language_policy import recognition_language, alignment_language
-from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, RATE
+from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, token_budget, RATE
 
 def select_hotwords(words, context, limit=12):
     matched=[w for w in words if w.casefold() in context.casefold()]
@@ -101,6 +101,16 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
     try:
         generated=generate_complete(model,audio,language=language,hotwords=hotwords)
     except TokenLimitReached:
+        # Dense but normal speech can need more tokens without needing a seam.
+        base=token_budget(len(audio)/RATE);expanded=min(8192,max(1024,base*2))
+        if expanded>base:
+            try:
+                generated=generate_complete(model,audio,language=language,hotwords=hotwords,token_limit=expanded)
+            except TokenLimitReached:
+                generated=None
+            if generated is not None:
+                print('Qwen3-ASR: token limit recovered with bounded extended decoding',file=sys.stderr,flush=True)
+                return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
         # Prefer a quiet point near the middle, with real overlapping context.
         # Bound recursion so a looping decoder cannot run indefinitely.
         if len(audio)<4*RATE:
@@ -120,6 +130,9 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
             try:return recover_split(model,audio,start,end,language,hotwords,cut,budget)
             except SeamAmbiguous:continue
         raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
+    return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
+
+def completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats):
     text=generated.text.strip();segment=dict(text=text,start=start,end=end)
     if text and recover_repeats:
         from repeat_recovery import recover
@@ -202,12 +215,31 @@ def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None
         except OSError:
             checkpoint=None
             print('Qwen3-ASR: checkpoint unavailable',file=sys.stderr,flush=True)
-    model_state=[(p.name,p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(model_root.iterdir()) if p.is_file()]
-    runtime=pathlib.Path(sys.executable).stat()
+    model_state=[]
+    if checkpoint:
+        # A restored result must be bound to model bytes, not just a filename
+        # or a timestamp which can survive a model replacement.
+        for path in sorted(model_root.iterdir()):
+            if not path.is_file():continue
+            before=path.stat();digest=hashlib.sha256()
+            with path.open('rb') as model_file:
+                for block in iter(lambda:model_file.read(1024*1024),b''):digest.update(block)
+            after=path.stat()
+            if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise ValueError('Model changed while checking transcription checkpoint')
+            model_state.append((path.name,digest.hexdigest()))
+    runtime_hash=hashlib.sha256()
+    if checkpoint:
+        with pathlib.Path(sys.executable).open('rb') as executable_file:
+            for block in iter(lambda:executable_file.read(1024*1024),b''):runtime_hash.update(block)
+    source_root=pathlib.Path(__file__).resolve().parent
+    code_state=[]
+    for name in (('worker.py','inference_policy.py','repeat_recovery.py','alignment_windows.py','language_policy.py') if checkpoint else ()):
+        source=source_root/name
+        if source.is_file():code_state.append((name,hashlib.sha256(source.read_bytes()).hexdigest()))
     model=load(model_root);selected_language=recognition_language(language);result=[];reused=0
     for index,(clip,data) in enumerate(stream_clips()):
         selected=select_hotwords(words,context) or None
-        identity=json.dumps([1,clip,language,selected,context,recover_repeats,model_state,runtime.st_size,runtime.st_mtime_ns],sort_keys=True,ensure_ascii=False).encode()
+        identity=json.dumps([2,clip,language,selected,context,recover_repeats,model_state,runtime_hash.hexdigest(),code_state],sort_keys=True,ensure_ascii=False).encode()
         key=hashlib.sha256(identity+data).hexdigest()
         # At most 8192 files of 64 KiB per imported file (512 MiB).
         entry=checkpoint/('%08d.json'%index) if checkpoint and index<8192 else None
