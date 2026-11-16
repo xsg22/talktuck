@@ -22,6 +22,7 @@ struct FeedbackMailView: View {
                 if !images.isEmpty { Button(L10n.text("清除")) { images = [] } }
             }
             Toggle(L10n.text("附带客户端日志"), isOn: $includeLogs).toggleStyle(.checkbox)
+            if includeLogs { Text(L10n.text("附带最近 24 小时内保留的脱敏诊断，可能不完整；不包含录音或逐字稿。")) .font(.caption).foregroundStyle(.secondary) }
             if let error { Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
             HStack {
                 Button(L10n.text("关闭")) { dismiss() }

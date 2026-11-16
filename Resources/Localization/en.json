@@ -1,4 +1,12 @@
 {
+  "Qwen 在分段重试时出现疑似重复识别，结果未保存。原录音和已有文字已保留，可以重试。": "Qwen produced suspected repeated decoding while retrying a segment, so the result was not saved. The original recording and existing text are preserved; you can retry.",
+  "Qwen 无法确认分段接缝，结果未保存。原录音和已有文字已保留，可以重试。": "Qwen could not confirm a segment boundary, so the result was not saved. The original recording and existing text are preserved; you can retry.",
+  "Qwen 分段识别未完成，当前语言不支持本地备用识别。原录音和已有文字已保留，可更换语言后重试。": "Qwen could not finish this segment, and local fallback does not support the selected language. The original recording and existing text are preserved; change the language and retry.",
+  "Qwen 分段识别未完成，本地备用模型或引擎缺失。原录音和已有文字已保留，请检查模型后重试。": "Qwen could not finish this segment, and the local fallback model or engine is missing. The original recording and existing text are preserved; check the model and retry.",
+  "Qwen 分段识别未完成，备用模型返回的结果不完整或无效。原录音和已有文字已保留，可以重试。": "Qwen could not finish this segment, and the fallback result was incomplete or invalid. The original recording and existing text are preserved; you can retry.",
+  "Qwen 分段识别未完成，本地备用模型运行失败或超时。原录音和已有文字已保留，可以重试。": "Qwen could not finish this segment, and the local fallback failed or timed out. The original recording and existing text are preserved; you can retry.",
+  "录音已停止并保存，部分转录尚未完成。原因：{0} 原音、已有定稿与重试位置均已保留。": "Recording stopped and was saved, but some transcription is unfinished. Reason: {0} The original audio, finalized text, and retry position are preserved.",
+  "附带最近 24 小时内保留的脱敏诊断，可能不完整；不包含录音或逐字稿。": "Includes retained, redacted diagnostics from the last 24 hours, which may be incomplete. Audio and transcripts are excluded.",
   "部分音频由本地备用模型识别，文字可能不准确，边界可能重复，请结合录音核对。": "Some audio used a local fallback model. Text may be inaccurate or repeated at boundaries; check it against the recording.",
   "部分音频暂时无法可靠识别。原录音和已有文字已保留，请检查音频后重试。": "Some audio could not be transcribed reliably. The original audio and existing text have been preserved; check the audio and try again.",
   "录制系统声音需要屏幕与系统音频录制权限。请在系统设置中允许 TalkTuck，然后返回重试。": "Recording system audio requires Screen & System Audio Recording permission. Allow TalkTuck in System Settings, then return and try again.",
