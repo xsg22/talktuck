@@ -1,4 +1,4 @@
-import json,os,pathlib,subprocess,sys,tempfile,time,types,unittest
+import contextlib,io,json,os,pathlib,subprocess,sys,tempfile,time,types,unittest
 from unittest.mock import patch
 
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/'Native/QwenRuntime'))
@@ -67,7 +67,11 @@ class FallbackSmoke(unittest.TestCase):
             def run():
                 with patch.dict(sys.modules,modules),patch.dict(os.environ,{'TALKTUCK_PARAFORMER_EXECUTABLE':str(executable),'TALKTUCK_PARAFORMER_MODEL':str(alt)}),patch.object(worker,'stream_clips',lambda:iter([(clip,payload)])),patch.object(worker,'recognized_segment',side_effect=worker.TokenLimitReached('limit')),patch.object(worker,'paraformer_fallback',fallback):
                     worker.transcribe_stream(str(qwen),'auto',str(root/'out'),str(hints),str(root/'checkpoints'))
-            run();self.assertEqual(len(calls),1);run();self.assertEqual(len(calls),1)
+            log=io.StringIO()
+            with contextlib.redirect_stderr(log):run()
+            self.assertIn('TALKTUCK_FALLBACK attempt token_limit',log.getvalue())
+            self.assertIn('TALKTUCK_FALLBACK succeeded token_limit',log.getvalue())
+            self.assertEqual(len(calls),1);run();self.assertEqual(len(calls),1)
             (alt/'tokens.txt').write_text('changed');run();self.assertEqual(len(calls),2)
 
 if __name__=='__main__':unittest.main()

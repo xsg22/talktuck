@@ -26,6 +26,18 @@ import Foundation
         precondition(!String(decoding: exported, as: UTF8.self).contains("base64"))
         let expired = try journal.snapshot(since: Date().addingTimeInterval(60))
         precondition(expired.split(separator: 10).count == 1)
+        let markersURL=root.appendingPathComponent("markers.log")
+        FileManager.default.createFile(atPath:markersURL.path,contents:nil)
+        let markersMirror=try FileHandle(forWritingTo:markersURL)
+        let markerCapture=WorkerLogCapture(mirror:markersMirror,stage:"Qwen语音定稿",journal:journal)
+        let markerChild=Process();markerChild.executableURL=URL(fileURLWithPath:"/bin/sh")
+        markerChild.arguments=["-c","printf 'TALKTUCK_FALLBACK attempt token_'; printf 'limit\\nTALKTUCK_FALLBACK succeeded token_limit\\nTALKTUCK_FALLBACK failed engine_unavailable\\nTALKTUCK_FALLBACK failed private-transcript\\nprivate-transcript\\n'"]
+        markerChild.standardOutput=markerCapture.pipe;markerChild.standardError=markerCapture.pipe
+        try markerChild.run();markerCapture.start();markerChild.waitUntilExit()
+        precondition(markerCapture.waitForDrain());try markersMirror.close()
+        let safe=String(decoding:try journal.safeSnapshot(),as:UTF8.self)
+        precondition(safe.contains("fallback-attempt") && safe.contains("fallback-succeeded") && safe.contains("fallback-failed"))
+        precondition(safe.contains("token_limit") && safe.contains("engine_unavailable") && !safe.contains("private-transcript"))
         print("PASS: bounded worker summary, mirror preserved, legacy bytes excluded from feedback")
     }
 }

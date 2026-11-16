@@ -18,6 +18,7 @@ struct ProgressiveSnapshot: Sendable {
     let subtitles: String
     let paragraphs: [TranscriptParagraph]
     var pendingSeams:Int = 0
+    var fallbackCount:Int = 0
 }
 
 /// Audio remains in the recorder's immutable AAC segments. This object queues
@@ -48,6 +49,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
     private var outputs:[UUID:TranscriptionOutput]=[:]
     private var waiters:[CheckedContinuation<ProgressiveSnapshot,Error>]=[]
     private var failures=Set<UUID>()
+    private var failureDetails:[UUID:String]=[:]
     private var analysisReady=Set<UUID>()
     private var voiceFrames:Int64=0
     private var stopWaiters:[CheckedContinuation<Void,Never>]=[]
@@ -188,10 +190,11 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
         }
     }
     private func snapshot(limit:Int?=nil) -> ProgressiveSnapshot {
-        var text="";var subtitles="";var rows:[TranscriptParagraph]=[];var completed:Int64=0
+        var text="";var subtitles="";var rows:[TranscriptParagraph]=[];var completed:Int64=0;var fallbackCount=0
         func stamp(_ t:Double)->String { let m=Int((t*1000).rounded());return String(format:"%02d:%02d:%02d,%03d",m/3600000,m/60000%60,m/1000%60,m%1000) }
         for job in journal!.jobs.prefix(limit ?? journal!.jobs.count) {
             guard let output=outputs[job.id] else { break }
+            fallbackCount += output.fallbackCount
             if !output.text.isEmpty { subtitles+="\(subtitles.components(separatedBy:"\n\n").filter{!$0.isEmpty}.count+1)\n\(stamp(baseOffset+Double(job.ownedStart)/16000)) --> \(stamp(baseOffset+Double(job.end)/16000))\n\(output.text)\n\n" }
             var first=true
             for var row in output.paragraphs {
@@ -211,7 +214,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
             completed=job.end
         }
         text=rows.map{$0.separator+$0.text}.joined()
-        return ProgressiveSnapshot(captureID:journal!.captureID,completedFrames:completed,totalFrames:journal!.observed,jobs:outputs.count,text:text,subtitles:subtitles,paragraphs:rows,pendingSeams:failures.count)
+        return ProgressiveSnapshot(captureID:journal!.captureID,completedFrames:completed,totalFrames:journal!.observed,jobs:outputs.count,text:text,subtitles:subtitles,paragraphs:rows,pendingSeams:failures.count,fallbackCount:fallbackCount)
     }
     /// A transport edge is not a sentence boundary. Join only a confident,
     /// same-speaker unfinished sentence; never join an actual pause or change.
@@ -279,7 +282,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
                     let savedFailure=(try? Data(contentsOf:recovery)).flatMap{try? JSONDecoder().decode([String:Int].self,from:$0)}?["failedWindowSeconds"]
                     let requested=Self.recoveryWindow(configured:Int(window/16000),failed:savedFailure)
                     raw=try engine.transcribeBatch(audio:ref,model:model,executable:executable,language:language,hotwords:hotwords,
-                        context:context+String(priorText.suffix(1200)),windowSeconds:requested,onRecovery:{seconds in
+                        context:context+String(priorText.suffix(1200)),windowSeconds:requested,allowParaformerFallback:true,onRecovery:{seconds in
                             try? BalancedAudioIO.save(["failedWindowSeconds":seconds],to:recovery)
                         })
                     try BalancedAudioIO.save(raw,to:recognition)
@@ -302,7 +305,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
                     meta["skipSeconds"]=Double(job.ownedStart-job.start)/16000
                     try JSONSerialization.data(withJSONObject:meta).write(to:state,options:.atomic)
                 }
-                let result:TranscriptionOutput
+                var result:TranscriptionOutput
                 do {
                     if !cached {
                         _ = try engine.analyzeSpeakers(audio:ref,model:model,executable:executable,transcript:raw,language:language,hotwords:hotwords,speakerCheckpoint:state)
@@ -337,6 +340,9 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
                     result=raw.readingFallback(hotwords:hotwords)
                     try BalancedAudioIO.save(["message":error.localizedDescription],to:root.appendingPathComponent(job.id.uuidString+"-annotation-issue.json"))
                 }
+                // Alignment and seam ownership return new output objects. Keep
+                // the recognition provenance through those transformations.
+                result.fallbackCount=raw.fallbackCount
                 // Commit result last. A crash before this marker reruns only
                 // annotations using cached ASR, never the acknowledged prefix.
                 if !cached { try ProgressiveAnalysisCache.publishVoice(from:attempt,root:root,job:job) }
@@ -347,7 +353,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
                 queue.asyncAfter(deadline:.now()+1) { [self] in running=false;resolve();kick() }
             } catch {
                 queue.async { [self] in
-                    running=false;failures.insert(job.id)
+                    running=false;failures.insert(job.id);failureDetails[job.id]=error.localizedDescription
                     let detail=["jobId":job.id.uuidString,"message":error.localizedDescription]
                     try? BalancedAudioIO.save(detail,to:root.appendingPathComponent("last-failure.json"))
                     if let i=self.journal!.jobs.firstIndex(where:{$0.id==job.id}) { self.journal!.jobs[i].status=analysisReady.contains(job.id) ? "seam-pending":"failed" }
@@ -358,7 +364,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
     }
     private func completed(_ job:ProgressiveJob,result:TranscriptionOutput) {
         queue.async { [self] in
-            outputs[job.id]=result;failures.remove(job.id);running=false
+            outputs[job.id]=result;failures.remove(job.id);failureDetails.removeValue(forKey:job.id);running=false
             if let i=self.journal!.jobs.firstIndex(where:{$0.id==job.id}) { self.journal!.jobs[i].status="completed" }
             try? persist();if !cancelled { onUpdate(snapshot()) };kick();resolve()
         }
@@ -371,7 +377,9 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
         let current=waiters;waiters=[]
         for w in current {
             if ready.completedFrames==journal.observed { w.resume(returning:ready) }
-            else { w.resume(throwing:TranscriptionError.message("录音已停止并保存。部分转录尚未完成，可继续转录；原音、已有定稿与重试位置均已保留。")) }
+            else if let failed=journal.jobs.first(where:{ failures.contains($0.id) }),let detail=failureDetails[failed.id] {
+                w.resume(throwing:TranscriptionError.message(L10n.format("录音已停止并保存，部分转录尚未完成。原因：{0} 原音、已有定稿与重试位置均已保留。",detail)))
+            } else { w.resume(throwing:TranscriptionError.message("录音已停止并保存。部分转录尚未完成，可继续转录；原音、已有定稿与重试位置均已保留。")) }
         }
     }
 }
@@ -401,7 +409,7 @@ enum ProgressiveTranscriptCommit {
         latest.subtitles=try MeetingRecordingAppend.appendSRT(tailSubtitles,to:latest.subtitles,offset:0)
         latest.duration=max(latest.duration,base.duration+Double(snapshot.totalFrames)/16000)
         latest.transcriptOrigin = .local
-        latest.transcriptionEngine=MeetingRecordingAppend.engineName(existing:base.transcriptionEngine,appending:true,hasExistingText:!base.text.isEmpty,outputs:[])
+        latest.transcriptionEngine=MeetingRecordingAppend.engineName(existing:base.transcriptionEngine,appending:true,hasExistingText:!base.text.isEmpty,outputs:[TranscriptionOutput(text:"",subtitles:"",fallbackCount:snapshot.fallbackCount)])
         for row in rows { for id in row.speakerIDs where latest.speakerNames[id]==nil { latest.speakerNames[id]="发言人 \(latest.speakerNames.count+1)" } }
         if complete {
             if let file=audioFile { latest.pendingAudioFiles.removeAll{$0==file} }

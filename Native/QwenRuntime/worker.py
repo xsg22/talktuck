@@ -344,10 +344,22 @@ def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None
         if segment is None:
             try:
                 segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=selected,recover_repeats=recover_repeats)
-            except TokenLimitReached:
+            except TokenLimitReached as failure:
                 if not allow_fallback:raise
-                segment=paraformer_fallback(data,clip,language,model_root)
-                print('Qwen3-ASR: local preview fallback used',file=sys.stderr,flush=True)
+                detail=str(failure).lower()
+                reason='repeated_decoding' if 'repeated decoding' in detail else 'seam_unresolved' if isinstance(failure,SeamAmbiguous) else 'token_limit'
+                print('TALKTUCK_FALLBACK attempt '+reason,file=sys.stderr,flush=True)
+                try:
+                    segment=paraformer_fallback(data,clip,language,model_root)
+                except ValueError as error:
+                    detail=str(error)
+                    cause={'Local fallback unavailable for this language':'unsupported_language',
+                           'Local fallback engine unavailable':'engine_unavailable',
+                           'Incomplete local fallback coverage':'incomplete_result',
+                           'Invalid local fallback result':'invalid_result'}.get(detail,'engine_failed')
+                    print('TALKTUCK_FALLBACK failed '+cause,file=sys.stderr,flush=True)
+                    raise
+                print('TALKTUCK_FALLBACK succeeded '+reason,file=sys.stderr,flush=True)
             if entry and not entry.is_symlink():
                 try:
                     checksum=hashlib.sha256(json.dumps(segment,sort_keys=True,ensure_ascii=False).encode()).hexdigest()

@@ -695,7 +695,7 @@ final class AppState: ObservableObject {
         let engine = TranscriptionEngine(); self.engine = engine
         let selectedLanguage = targetID == nil ? language : record.language
         let selectedHotwords = hotwords.words
-        let allowParaformerFallback = record.source == .imported
+        let allowParaformerFallback = true
         let initialHotwordContext = record.title + "\n" + (appending ? String(record.text.suffix(1800)) : "")
         task = Task { [self] in
             let start = Date()

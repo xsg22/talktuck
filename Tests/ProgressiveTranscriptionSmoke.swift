@@ -74,6 +74,11 @@ private final class ProgressiveCalls: @unchecked Sendable {
         var shifted=final.paragraphs
         for i in shifted.indices { let local=shifted[i].start;shifted[i].applyAudioOffset(7);shifted[i].localStart=local }
         let committed=ProgressiveSnapshot(captureID:final.captureID,completedFrames:final.completedFrames,totalFrames:final.totalFrames,jobs:final.jobs,text:final.text,subtitles:"",paragraphs:shifted)
+        var fallbackSnapshot=committed;fallbackSnapshot.fallbackCount=1
+        var noMarker=base;noMarker.transcriptionEngine="qwen3-asr-1.7b-8bit"
+        var fallbackRecord=noMarker
+        try ProgressiveTranscriptCommit.apply(fallbackSnapshot,base:noMarker,expectedText:noMarker.text,audioFile:nil,complete:false,recording:true,to:&fallbackRecord)
+        precondition(fallbackRecord.transcriptionEngine?.contains("paraformer-fallback") == true,"Current capture fallback provenance must be published")
         try ProgressiveTranscriptCommit.apply(committed,base:base,expectedText:base.text,audioFile:nil,complete:false,recording:true,to:&record)
         let expected=record.text;record.title="用户新标题"
         record=try library.save(record)

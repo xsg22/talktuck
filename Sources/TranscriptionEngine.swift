@@ -13,7 +13,25 @@ enum TranscriptionError: LocalizedError {
     }
     static func workerFailure(stage:String, status:Int32, details:String) -> TranscriptionError {
         let text=details.lowercased()
-        if ["seam retry budget exhausted","overlap could not be reconciled","suspicious repeated decoding","local fallback"].contains(where: { text.contains($0) }) { return .unsafeRecovery }
+        if text.contains("local fallback unavailable for this language") {
+            return .message(L10n.text("Qwen 分段识别未完成，当前语言不支持本地备用识别。原录音和已有文字已保留，可更换语言后重试。"))
+        }
+        if text.contains("local fallback engine unavailable") {
+            return .message(L10n.text("Qwen 分段识别未完成，本地备用模型或引擎缺失。原录音和已有文字已保留，请检查模型后重试。"))
+        }
+        if text.contains("incomplete local fallback coverage") || text.contains("invalid local fallback result") {
+            return .message(L10n.text("Qwen 分段识别未完成，备用模型返回的结果不完整或无效。原录音和已有文字已保留，可以重试。"))
+        }
+        if text.contains("local fallback failed") {
+            return .message(L10n.text("Qwen 分段识别未完成，本地备用模型运行失败或超时。原录音和已有文字已保留，可以重试。"))
+        }
+        if text.contains("suspicious repeated decoding") {
+            return .message(L10n.text("Qwen 在分段重试时出现疑似重复识别，结果未保存。原录音和已有文字已保留，可以重试。"))
+        }
+        if text.contains("seam retry budget exhausted") || text.contains("overlap could not be reconciled") {
+            return .message(L10n.text("Qwen 无法确认分段接缝，结果未保存。原录音和已有文字已保留，可以重试。"))
+        }
+        if text.contains("local fallback") { return .unsafeRecovery }
         return .message("\(stage)失败（代码 \(status)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
     }
 }

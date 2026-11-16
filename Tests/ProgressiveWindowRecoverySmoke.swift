@@ -33,6 +33,10 @@ import AVFoundation
         precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.message("Transcript token limit reached; seam retry budget exhausted; partial result not saved")))
         precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.message("Transcript token limit reached; suspicious repeated decoding; partial result not saved")))
         precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.workerFailure(stage:"Qwen",status:1,details:"Transcript token limit reached; seam retry budget exhausted")))
+        let missing=TranscriptionError.workerFailure(stage:"Qwen",status:1,details:"Local fallback engine unavailable")
+        precondition(missing.localizedDescription == L10n.text("Qwen 分段识别未完成，本地备用模型或引擎缺失。原录音和已有文字已保留，请检查模型后重试。"))
+        let invalid=TranscriptionError.workerFailure(stage:"Qwen",status:1,details:"Incomplete local fallback coverage")
+        precondition(invalid.localizedDescription == L10n.text("Qwen 分段识别未完成，备用模型返回的结果不完整或无效。原录音和已有文字已保留，可以重试。"))
         print("PASS: no truncated text published, finite failed-batch-only decoder recovery, 120s windows with 3s context cover all 400s")
     }
 }
