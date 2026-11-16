@@ -1,4 +1,6 @@
 {
+  "部分音频由本地备用模型识别，文字可能不准确，边界可能重复，请结合录音核对。": "Some audio used a local fallback model. Text may be inaccurate or repeated at boundaries; check it against the recording.",
+  "部分音频暂时无法可靠识别。原录音和已有文字已保留，请检查音频后重试。": "Some audio could not be transcribed reliably. The original audio and existing text have been preserved; check the audio and try again.",
   "录制系统声音需要屏幕与系统音频录制权限。请在系统设置中允许 TalkTuck，然后返回重试。": "Recording system audio requires Screen & System Audio Recording permission. Allow TalkTuck in System Settings, then return and try again.",
   "打开系统设置": "Open System Settings",
   "TalkTuck 意见反馈 (Mac)": "TalkTuck feedback (Mac)",

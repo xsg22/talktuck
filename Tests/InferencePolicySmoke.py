@@ -25,6 +25,11 @@ class PolicyTests(unittest.TestCase):
         self.assertGreater(model.kwargs['chunk_duration'],120);self.assertEqual(model.kwargs['max_tokens'],2048)
         model.tokens=2048
         with self.assertRaises(ValueError):generate_complete(model,bytearray(120*16000),language='Chinese')
+        model.tokens=2500
+        self.assertEqual(generate_complete(model,bytearray(120*16000),language='Chinese',token_limit=4096).text,'kept')
+        self.assertEqual(model.kwargs['max_tokens'],4096)
+        for invalid in (2047,8193,True):
+            with self.assertRaises(ValueError):generate_complete(model,bytearray(120*16000),language='Chinese',token_limit=invalid)
         model.tokens=100;model.segments=[dict(start=0,end=30),dict(start=30,end=120)]
         with self.assertRaises(ValueError):generate_complete(model,bytearray(120*16000),language='Chinese')
         model.segments=[dict(start=0,end=30)]

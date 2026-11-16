@@ -2,6 +2,13 @@ import Foundation
 
 /// 新片段定稿与待处理队列一起保存，重试不重复追加已成功的片段。
 enum MeetingRecordingAppend {
+    static func engineName(existing:String?, appending:Bool, hasExistingText:Bool, outputs:[TranscriptionOutput]) -> String {
+        var name = appending && hasExistingText && existing != "qwen3-asr-1.7b-8bit" ? "mixed-history-and-qwen3-asr" : "qwen3-asr-1.7b-8bit"
+        if outputs.contains(where: { $0.fallbackCount > 0 }) || (appending && (existing?.contains("paraformer-fallback") ?? false)) {
+            name += "+paraformer-fallback"
+        }
+        return name
+    }
     /// 持续录音的时间轴来自采集时的真实片段起点，不能用片段时长相加代替静音间隔。
     static func applyContinuous(_ output: TranscriptionOutput, file: String, start: Double,
                                 to record: inout MeetingRecord) throws {

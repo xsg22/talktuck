@@ -136,12 +136,13 @@ int main(int argc,char **argv) {
     try {
         if(argc==5 && std::string(argv[1])=="segment")return segment(argv[2],argv[3],argv[4]);
         if(argc==4 && std::string(argv[1])=="segment-timestamps")return segmentTimestamps(argv[2],argv[3]);
+        const bool offlinePreview=argc==4 && std::string(argv[1])=="--offline-preview";
         const bool xasr=argc==6 && std::string(argv[1])=="xasr";
-        if(argc!=3 && !xasr)throw std::runtime_error("usage: paraformer-live modelDirectory language OR xasr modelDirectory language vadPath hotwordsPath OR segment modelDirectory wav outputDirectory");
-        const std::string requestedLanguage=argv[xasr?3:2];
+        if(argc!=3 && !xasr && !offlinePreview)throw std::runtime_error("usage: paraformer-live modelDirectory language OR xasr modelDirectory language vadPath hotwordsPath OR segment modelDirectory wav outputDirectory");
+        const std::string requestedLanguage=argv[(xasr||offlinePreview)?3:2];
         if(requestedLanguage!="zh"&&requestedLanguage!="en"&&requestedLanguage!="auto")
             throw std::runtime_error("Live preview supports Chinese and English only (zh, en, auto).");
-        const std::string models=argv[xasr?2:1];
+        const std::string models=argv[(xasr||offlinePreview)?2:1];
         SherpaOnnxOnlineRecognizerConfig config{};
         std::string encoder=models+(xasr?"/encoder.onnx":"/encoder.int8.onnx"),decoder=models+(xasr?"/decoder.onnx":"/decoder.int8.onnx"),tokens=models+"/tokens.txt",joiner=models+"/joiner.onnx",vocab=models+"/bpe.vocab";
         config.feat_config.sample_rate=16000;config.feat_config.feature_dim=80;
@@ -160,7 +161,7 @@ int main(int argc,char **argv) {
         std::cout<<"{\"type\":\"ready\",\"text\":\"\",\"start\":0,\"end\":0,\"requestedLanguage\":"
                  <<quoted(requestedLanguage)<<",\"effectiveLanguage\":\"zh-en\",\"forcedLanguage\":false}"<<std::endl;
         const SherpaOnnxOnlineStream *stream=nullptr;
-        std::vector<float> prefix,buffer;uint64_t total=0;double begin=0;std::string last;
+        std::vector<float> prefix,buffer;uint64_t total=0;double begin=0;std::string last;size_t offlineCommits=0;
         auto decode=[&](bool final) {
             if(!stream)return;
             if(final) {
@@ -171,7 +172,8 @@ int main(int argc,char **argv) {
             auto *result=SherpaOnnxGetOnlineStreamResult(recognizer,stream);
             std::string text=result&&result->text?result->text:"";
             if(result)SherpaOnnxDestroyOnlineRecognizerResult(result);
-            if(final||text!=last) {if(!text.empty())event(final?"commit":"partial",text,begin,total/16000.0);last=text;}
+            if(offlinePreview&&final&&!text.empty()&&(text.size()>4096||++offlineCommits>2048))throw std::runtime_error("备用识别结果超出限制");
+            if(final||(!offlinePreview&&text!=last)) {if(!text.empty())event(final?"commit":"partial",text,begin,total/16000.0);last=text;}
             if(final){SherpaOnnxDestroyOnlineStream(stream);stream=nullptr;last.clear();prefix.clear();}
         };
         auto frame=[&](const float *p,int n) {

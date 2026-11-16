@@ -400,7 +400,8 @@ enum ProgressiveTranscriptCommit {
         latest.subtitles=try MeetingRecordingAppend.appendSRT(snapshot.subtitles,to:base.subtitles,offset:0)
         latest.subtitles=try MeetingRecordingAppend.appendSRT(tailSubtitles,to:latest.subtitles,offset:0)
         latest.duration=max(latest.duration,base.duration+Double(snapshot.totalFrames)/16000)
-        latest.transcriptOrigin = .local;latest.transcriptionEngine="qwen3-asr-1.7b-8bit"
+        latest.transcriptOrigin = .local
+        latest.transcriptionEngine=MeetingRecordingAppend.engineName(existing:base.transcriptionEngine,appending:true,hasExistingText:!base.text.isEmpty,outputs:[])
         for row in rows { for id in row.speakerIDs where latest.speakerNames[id]==nil { latest.speakerNames[id]="发言人 \(latest.speakerNames.count+1)" } }
         if complete {
             if let file=audioFile { latest.pendingAudioFiles.removeAll{$0==file} }

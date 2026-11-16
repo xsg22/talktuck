@@ -4,28 +4,41 @@ import Darwin
 
 enum TranscriptionError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case let .message(message) = self { return message }; return nil }
+    case unsafeRecovery
+    var errorDescription: String? {
+        switch self {
+        case let .message(message): return message
+        case .unsafeRecovery: return L10n.text("部分音频暂时无法可靠识别。原录音和已有文字已保留，请检查音频后重试。")
+        }
+    }
+    static func workerFailure(stage:String, status:Int32, details:String) -> TranscriptionError {
+        let text=details.lowercased()
+        if ["seam retry budget exhausted","overlap could not be reconciled","suspicious repeated decoding","local fallback"].contains(where: { text.contains($0) }) { return .unsafeRecovery }
+        return .message("\(stage)失败（代码 \(status)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+    }
 }
 
-private struct HotwordHints: Encodable { let words: [String]; let context: String; var recoverRepeatedOutput = false }
+private struct HotwordHints: Encodable { let words: [String]; let context: String; var recoverRepeatedOutput = false; var allowParaformerFallback = false }
 
 struct TranscriptionOutput: Codable, Sendable {
     let text: String
     let subtitles: String
     var paragraphs: [TranscriptParagraph] = []
     var originalCandidates: [OriginalRecognitionCandidate] = []
-    init(text: String, subtitles: String, paragraphs: [TranscriptParagraph] = [], originalCandidates: [OriginalRecognitionCandidate] = []) {
-        self.text = text; self.subtitles = subtitles; self.paragraphs = paragraphs; self.originalCandidates = originalCandidates
+    var fallbackCount: Int = 0
+    init(text: String, subtitles: String, paragraphs: [TranscriptParagraph] = [], originalCandidates: [OriginalRecognitionCandidate] = [], fallbackCount: Int = 0) {
+        self.text = text; self.subtitles = subtitles; self.paragraphs = paragraphs; self.originalCandidates = originalCandidates; self.fallbackCount = fallbackCount
     }
-    private enum CodingKeys: String, CodingKey { case text, subtitles, paragraphs, originalCandidates }
+    private enum CodingKeys: String, CodingKey { case text, subtitles, paragraphs, originalCandidates, fallbackCount }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         text = try values.decode(String.self, forKey: .text); subtitles = try values.decode(String.self, forKey: .subtitles)
         paragraphs = try values.decodeIfPresent([TranscriptParagraph].self, forKey: .paragraphs) ?? []
         originalCandidates = try values.decodeIfPresent([OriginalRecognitionCandidate].self, forKey: .originalCandidates) ?? []
+        fallbackCount = try values.decodeIfPresent(Int.self, forKey: .fallbackCount) ?? 0
     }
     func readingFallback(hotwords: [String] = []) -> TranscriptionOutput {
-        TranscriptionOutput(text: text, subtitles: subtitles, paragraphs: TranscriptReadability.fallback(text, hotwords: hotwords), originalCandidates: originalCandidates)
+        TranscriptionOutput(text: text, subtitles: subtitles, paragraphs: TranscriptReadability.fallback(text, hotwords: hotwords), originalCandidates: originalCandidates, fallbackCount: fallbackCount)
     }
 }
 
@@ -102,7 +115,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         if wasCancelled { throw CancellationError() }
         guard child.terminationStatus == 0 else {
             let details = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-            throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+            throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
         }
     }
 
@@ -156,13 +169,13 @@ final class TranscriptionEngine: @unchecked Sendable {
             let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError
             let broken = (ns.domain == NSPOSIXErrorDomain && ns.code == Int(EPIPE)) || (underlying?.domain == NSPOSIXErrorDomain && underlying?.code == Int(EPIPE))
             if broken, let details = try? String(contentsOf: logURL, encoding: .utf8), !details.isEmpty {
-                throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+                throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
             }
             throw feedError
         }
         guard child.terminationStatus == 0 else {
             let details = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
-            throw TranscriptionError.message("\(stage)失败（代码 \(child.terminationStatus)）。原始录音和已有文字已保留，可以重试。\n\n" + String(details.suffix(1800)))
+            throw TranscriptionError.workerFailure(stage:stage,status:child.terminationStatus,details:details)
         }
     }
 
@@ -208,7 +221,7 @@ final class TranscriptionEngine: @unchecked Sendable {
 
     // Offline recognition keeps quiet speech: only near-digital silence is skipped.
     private func fixedWindowTranscribe(audio: URL, model: URL, executable: URL, language: String,
-                                       hotwords: [String], context: String, directory: URL, windowSeconds:Int, overlapSeconds:Int, recoverRepeatedOutput:Bool) throws -> TranscriptionOutput {
+                                       hotwords: [String], context: String, directory: URL, windowSeconds:Int, overlapSeconds:Int, recoverRepeatedOutput:Bool, checkpointDirectory: URL?, allowParaformerFallback: Bool) throws -> TranscriptionOutput {
         guard windowSeconds > 0, windowSeconds <= ASRWindowPolicy.maximumASRSeconds, overlapSeconds >= 0, overlapSeconds < windowSeconds else { throw TranscriptionError.message("音频片段时间无效。") }
         let canonical = try canonicalReader(for: audio)
         var wave: AVAudioFile?
@@ -240,8 +253,10 @@ final class TranscriptionEngine: @unchecked Sendable {
         }
         if windows.isEmpty { return TranscriptionOutput(text: "", subtitles: "") }
         let output = directory.appendingPathComponent("transcript.json"), hints = directory.appendingPathComponent("hotwords.json")
-        try JSONEncoder().encode(HotwordHints(words: hotwords, context: String(context.unicodeScalars.suffix(2000)), recoverRepeatedOutput: recoverRepeatedOutput)).write(to: hints, options: .atomic)
-        try runStreaming(executable, ["--transcribe-stream", model.path, language, output.path, hints.path], directory: directory, stage: "Qwen语音定稿") { pipe in
+        try JSONEncoder().encode(HotwordHints(words: hotwords, context: String(context.unicodeScalars.suffix(2000)), recoverRepeatedOutput: recoverRepeatedOutput, allowParaformerFallback: allowParaformerFallback)).write(to: hints, options: .atomic)
+        var arguments = ["--transcribe-stream", model.path, language, output.path, hints.path]
+        if let checkpointDirectory { arguments.append(checkpointDirectory.path) }
+        try runStreaming(executable, arguments, directory: directory, stage: "Qwen语音定稿") { pipe in
             for (start, end) in windows {
                 let header: [String: Any] = ["start": Double(start) / 16_000, "end": Double(end) / 16_000, "frames": Int(end-start)]
                 let data = try JSONSerialization.data(withJSONObject: header); var length = UInt32(data.count).littleEndian
@@ -257,7 +272,7 @@ final class TranscriptionEngine: @unchecked Sendable {
         try captureEvidence(output, name: "recognition.json")
         let segments = try JSONDecoder().decode(QwenOutput.self, from: Data(contentsOf: output)).segments
         guard segments.count == windows.count else { throw TranscriptionError.message("定稿未覆盖全部音频片段，原录音已保留。") }
-        var paragraphs: [TranscriptParagraph] = []; var subtitles: [String] = []; var previous = ""; var previousEnd: Double = -1
+        var paragraphs: [TranscriptParagraph] = []; var subtitles: [String] = []; var previous = ""; var previousEnd: Double = -1; var previousWasFallback = false
         var candidates: [OriginalRecognitionCandidate] = []
         for (i, s) in segments.enumerated() {
             let expected = windows[i]; let lo = Double(expected.0)/16_000, hi = Double(expected.1)/16_000
@@ -267,9 +282,11 @@ final class TranscriptionEngine: @unchecked Sendable {
                 candidates.append(OriginalRecognitionCandidate(start: lo, end: hi, original: prior, selected: s.text))
             }
             let original = s.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let text = lo < previousEnd ? Self.removeExactOverlap(previous, original) : original
+            // A cross-model boundary has no reliable word ownership. Preserve
+            // both sides rather than trimming possibly genuine repetition.
+            let text = lo < previousEnd && s.fallback != true && !previousWasFallback ? Self.removeExactOverlap(previous, original) : original
             let segmentStart = text == original ? lo : max(lo, min(previousEnd, hi))
-            previous = original; previousEnd = hi
+            previous = original; previousEnd = hi; previousWasFallback = s.fallback == true
             if !text.isEmpty {
                 subtitles.append("\(subtitles.count + 1)\n\(Self.timestamp(segmentStart)) --> \(Self.timestamp(hi))\n\(text)")
                 let parts = s.alignmentParts ?? [QwenOutput.Part(text: original, start: lo, end: hi)]
@@ -292,7 +309,7 @@ final class TranscriptionEngine: @unchecked Sendable {
                 guard remaining == 0 else { throw TranscriptionError.message("定稿重叠分段不完整。") }
             }
         }
-        return TranscriptionOutput(text: paragraphs.map { $0.separator + $0.text }.joined(), subtitles: subtitles.isEmpty ? "" : subtitles.joined(separator: "\n\n") + "\n\n", paragraphs: paragraphs, originalCandidates: candidates)
+        return TranscriptionOutput(text: paragraphs.map { $0.separator + $0.text }.joined(), subtitles: subtitles.isEmpty ? "" : subtitles.joined(separator: "\n\n") + "\n\n", paragraphs: paragraphs, originalCandidates: candidates, fallbackCount: segments.filter { $0.fallback == true }.count)
     }
     // Only remove strongly matching overlap; short or uncertain repetitions remain.
     static func removeExactOverlap(_ previous: String, _ current: String) -> String {
@@ -325,13 +342,15 @@ final class TranscriptionEngine: @unchecked Sendable {
     /// A decoder-limit failure must not publish truncated text. Retry only
     /// this unacknowledged batch, with a finite smaller-window sequence.
     func transcribeBatch(audio:URL,model:URL,executable:URL,language:String,hotwords:[String],context:String,
-                         windowSeconds:Int,initialOverlapSeconds:Int = 0,recoverRepeatedOutput:Bool = false,onRecovery:(Int)->Void = {_ in}) throws -> TranscriptionOutput {
+                         windowSeconds:Int,initialOverlapSeconds:Int = 0,recoverRepeatedOutput:Bool = false,checkpointDirectory:URL? = nil,allowParaformerFallback:Bool = false,onRecovery:(Int)->Void = {_ in}) throws -> TranscriptionOutput {
         var seen=Set<Int>();var last:Error=TranscriptionError.message("转录未完成。")
         for seconds in [windowSeconds,120,60,24,12,6] where seconds<=windowSeconds && seen.insert(seconds).inserted {
             try checkCancelled()
             do {
+                let overlap = seconds == windowSeconds ? initialOverlapSeconds : min(3, seconds - 1)
+                let attemptCheckpoint = checkpointDirectory?.appendingPathComponent("window-\(seconds)-overlap-\(overlap)", isDirectory: true)
                 return try transcribe(audio:audio,model:model,executable:executable,language:language,hotwords:hotwords,context:context,
-                    offlineWindows:true,windowSeconds:seconds,overlapSeconds: seconds == windowSeconds ? initialOverlapSeconds : min(3, seconds - 1), recoverRepeatedOutput: recoverRepeatedOutput)
+                    offlineWindows:true,windowSeconds:seconds,overlapSeconds:overlap, recoverRepeatedOutput: recoverRepeatedOutput, checkpointDirectory:attemptCheckpoint, allowParaformerFallback:allowParaformerFallback)
             } catch {
                 last=error;try checkCancelled()
                 guard Self.isRecoverableWindowFailure(error) else { throw error }
@@ -341,13 +360,17 @@ final class TranscriptionEngine: @unchecked Sendable {
         throw last
     }
     static func isRecoverableWindowFailure(_ error:Error)->Bool {
+        if let value=error as? TranscriptionError,case .unsafeRecovery=value { return false }
         let message=error.localizedDescription.lowercased()
+        // A smaller whole-file pass must not bypass a local safety decision
+        // and publish suspected repetition or an unresolved boundary.
+        if ["seam retry budget exhausted","overlap could not be reconciled","suspicious repeated decoding"].contains(where: { message.contains($0) }) { return false }
         return ["transcript token limit reached","memory limit","out of memory","failed to allocate"].contains{message.contains($0)}
     }
-    func transcribe(audio: URL, model: URL, executable: URL, language: String, hotwords: [String] = [], context: String = "", offlineWindows: Bool = false, windowSeconds:Int? = nil, overlapSeconds:Int? = nil, recoverRepeatedOutput:Bool = false) throws -> TranscriptionOutput {
+    func transcribe(audio: URL, model: URL, executable: URL, language: String, hotwords: [String] = [], context: String = "", offlineWindows: Bool = false, windowSeconds:Int? = nil, overlapSeconds:Int? = nil, recoverRepeatedOutput:Bool = false, checkpointDirectory: URL? = nil, allowParaformerFallback: Bool = false) throws -> TranscriptionOutput {
         let directory = try temporaryDirectory(prefix: "TalkTuck-")
         defer { try? FileManager.default.removeItem(at: directory) }
-        if offlineWindows { return try fixedWindowTranscribe(audio: audio, model: model, executable: executable, language: language, hotwords: hotwords, context: context, directory: directory, windowSeconds:windowSeconds ?? ASRWindowPolicy.load(language:language).offlineSeconds, overlapSeconds:overlapSeconds ?? ASRWindowPolicy.load().overlapSeconds, recoverRepeatedOutput:recoverRepeatedOutput) }
+        if offlineWindows { return try fixedWindowTranscribe(audio: audio, model: model, executable: executable, language: language, hotwords: hotwords, context: context, directory: directory, windowSeconds:windowSeconds ?? ASRWindowPolicy.load(language:language).offlineSeconds, overlapSeconds:overlapSeconds ?? ASRWindowPolicy.load().overlapSeconds, recoverRepeatedOutput:recoverRepeatedOutput, checkpointDirectory:checkpointDirectory, allowParaformerFallback:allowParaformerFallback) }
         let segmenter = executable.deletingLastPathComponent().appendingPathComponent("paraformer-live")
         let paraformer = model.deletingLastPathComponent().appendingPathComponent("Paraformer")
         let segments = directory.appendingPathComponent("segments", isDirectory: true)
@@ -554,7 +577,7 @@ final class TranscriptionEngine: @unchecked Sendable {
 
     private struct QwenOutput: Decodable {
         struct Part: Decodable { let text: String; let start: Double; let end: Double }
-        struct Segment: Decodable { let text: String; let start: Double; let end: Double; let alignmentParts: [Part]?; let alignmentIssue: String?; let originalText: String? }
+        struct Segment: Decodable { let text: String; let start: Double; let end: Double; let alignmentParts: [Part]?; let alignmentIssue: String?; let originalText: String?; let fallback: Bool? }
         let segments: [Segment]
     }
     private static func timestamp(_ seconds: Double) -> String {

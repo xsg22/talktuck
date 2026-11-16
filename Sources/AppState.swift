@@ -688,6 +688,7 @@ final class AppState: ObservableObject {
         let engine = TranscriptionEngine(); self.engine = engine
         let selectedLanguage = targetID == nil ? language : record.language
         let selectedHotwords = hotwords.words
+        let allowParaformerFallback = record.source == .imported
         let initialHotwordContext = record.title + "\n" + (appending ? String(record.text.suffix(1800)) : "")
         task = Task { [self] in
             let start = Date()
@@ -704,7 +705,8 @@ final class AppState: ObservableObject {
                     guard duration.isFinite, duration >= 0 else { throw TranscriptionError.message("录音时长无效。") }
                     let output = try await withTaskCancellationHandler {
                         try await Task.detached(priority: .userInitiated) {
-                            try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true)
+                            let checkpoint = library.root.appendingPathComponent("TranscriptionCheckpoints", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true).appendingPathComponent(String(index), isDirectory: true)
+                            return try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true, checkpointDirectory: checkpoint, allowParaformerFallback: allowParaformerFallback)
                         }.value
                     } onCancel: { engine.cancel() }
                     outputs.append(output); durations.append(duration)
@@ -715,8 +717,7 @@ final class AppState: ObservableObject {
                 var latest = try library.load(id)
                 try MeetingRecordingAppend.apply(outputs: outputs.map { $0.readingFallback(hotwords: selectedHotwords) }, files: files, durations: durations, appending: appending, to: &latest)
                 latest.language = selectedLanguage
-                latest.transcriptionEngine = appending && !record.text.isEmpty && record.transcriptionEngine != "qwen3-asr-1.7b-8bit"
-                    ? "mixed-history-and-qwen3-asr" : "qwen3-asr-1.7b-8bit"
+                latest.transcriptionEngine = MeetingRecordingAppend.engineName(existing:record.transcriptionEngine,appending:appending,hasExistingText:!record.text.isEmpty,outputs:outputs)
                 latest.seconds = Date().timeIntervalSince(start); latest.status = .completed
                 latest.speakerAnalysisStatus = .processing
                 latest.speakerAnalysisMessage = "正文已保存，正在区分发言人。"
@@ -1329,8 +1330,9 @@ final class AppState: ObservableObject {
                 try Task.checkCancellation()
                 if selection == id { saveEdits() }
                 var latest = try library.load(id)
+                let priorEngine=latest.transcriptionEngine, hadExistingText = !latest.text.isEmpty
                 try MeetingRecordingAppend.applyContinuous(output, file: file, start: segment.start, to: &latest)
-                latest.transcriptionEngine = "qwen3-asr-1.7b-8bit"
+                latest.transcriptionEngine = MeetingRecordingAppend.engineName(existing:priorEngine,appending:true,hasExistingText:hadExistingText,outputs:[output])
                 latest.speakerAnalysisStatus = .processing
                 latest.speakerAnalysisMessage = "片段正文已保存，正在区分发言人。"
                 try update(latest)

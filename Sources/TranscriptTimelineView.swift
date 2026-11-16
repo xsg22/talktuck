@@ -43,6 +43,10 @@ struct TranscriptTimelineView: View {
             if let record = state.current, !record.speakerAnalysisMessage.isEmpty, !showingLive && !history {
                 Text(L10n.text(record.speakerAnalysisMessage)).font(AppTypography.secondary).foregroundStyle(.secondary).lineLimit(3)
             }
+            if !showingLive && !history && (state.current?.transcriptionEngine?.contains("paraformer-fallback") ?? false) {
+                Text(L10n.text("部分音频由本地备用模型识别，文字可能不准确，边界可能重复，请结合录音核对。"))
+                    .font(AppTypography.secondary).foregroundStyle(.secondary)
+            }
             if !selectedRecording && !(state.current?.subtitles.isEmpty ?? true) && !history {
                 DisclosureGroup(L10n.text("原始字幕与时间戳")) {
                     ScrollView { Text(state.current?.subtitles ?? "").font(.system(size: 15, design: .monospaced)).textSelection(.enabled) }.frame(maxHeight: 100)

@@ -4,9 +4,9 @@ import os
 os.environ['HF_HUB_OFFLINE']='1'
 os.environ['TRANSFORMERS_OFFLINE']='1'
 os.environ['TOKENIZERS_PARALLELISM']='false'
-import json,math,pathlib,struct,sys,wave
+import collections,hashlib,json,math,pathlib,struct,sys,wave,os,unicodedata,signal,subprocess
 from language_policy import recognition_language, alignment_language
-from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory
+from inference_policy import MAX_ASR_SECONDS, MAX_ALIGNMENT_SECONDS, validate_clip, generate_complete, configure_memory, TokenLimitReached, token_budget, RATE
 
 def select_hotwords(words, context, limit=12):
     matched=[w for w in words if w.casefold() in context.casefold()]
@@ -94,8 +94,60 @@ def stream_clips(max_seconds=MAX_ASR_SECONDS):
         if len(data)!=frames*4:raise ValueError('Incomplete clip PCM')
         yield item,data
 
-def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False):
-    generated=generate_complete(model,audio,language=language,hotwords=hotwords)
+class SeamAmbiguous(TokenLimitReached):
+    pass
+
+class RepetitionDetected(TokenLimitReached):
+    pass
+
+def suspicious_repetition(text):
+    """Reject suspicious decoder loops during recovery; never delete words."""
+    value=''.join(c.casefold() for c in text if unicodedata.category(c)[0] in 'LN')
+    if len(value)<24:return False
+    counts=collections.Counter(value[i:i+4] for i in range(len(value)-3))
+    return max(counts.values(),default=0)>=max(7,math.ceil(len(value)*.06))
+
+def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_repeats=False,_budget=None):
+    try:
+        generated=generate_complete(model,audio,language=language,hotwords=hotwords)
+        if _budget is not None and suspicious_repetition(generated.text):
+            raise RepetitionDetected('Transcript token limit reached; suspicious repeated decoding; partial result not saved')
+    except TokenLimitReached as failure:
+        # Dense but normal speech can need more tokens without needing a seam.
+        base=token_budget(len(audio)/RATE);expanded=min(8192,max(1024,base*2))
+        if expanded>base and not isinstance(failure,RepetitionDetected):
+            try:
+                generated=generate_complete(model,audio,language=language,hotwords=hotwords,token_limit=expanded)
+            except TokenLimitReached:
+                generated=None
+            if generated is not None and suspicious_repetition(generated.text):generated=None
+            if generated is not None:
+                print('Qwen3-ASR: token limit recovered with bounded extended decoding',file=sys.stderr,flush=True)
+                return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
+        # Prefer a quiet point near the middle, with real overlapping context.
+        # Bound recursion so a looping decoder cannot run indefinitely.
+        if len(audio)<2*RATE:
+            raise
+        middle=len(audio)//2; step=RATE//10
+        radius=min(2*RATE,len(audio)//4)
+        candidates=sorted(range(middle-radius,middle+radius+1,step),key=lambda n:(sum(float(x)*float(x) for x in audio[n-step//2:n+step//2]),abs(n-middle)))
+        cuts=[]
+        for candidate in candidates:
+            if all(abs(candidate-other)>=RATE//2 for other in cuts):cuts.append(candidate)
+            if len(cuts)==5:break
+        budget=_budget if _budget is not None else [32]
+        print('Qwen3-ASR: token limit; retrying bounded subwindows',file=sys.stderr,flush=True)
+        for cut in cuts:
+            if budget[0]<=0:raise SeamAmbiguous('Transcript token limit reached; seam retry budget exhausted; partial result not saved')
+            budget[0]-=1
+            try:return recover_split(model,audio,start,end,language,hotwords,cut,budget)
+            # If even a child reaches its limit, try another local boundary;
+            # never let a whole-file fallback bypass recovery safety checks.
+            except TokenLimitReached:continue
+        raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
+    return completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats)
+
+def completed_segment(model,audio,generated,start,end,language,hotwords,recover_repeats):
     text=generated.text.strip();segment=dict(text=text,start=start,end=end)
     if text and recover_repeats:
         from repeat_recovery import recover
@@ -109,13 +161,114 @@ def recognized_segment(model,audio,*,start,end,language,hotwords=None,recover_re
             parts=prepare(model,audio,text,language=language,hotwords=hotwords)
             segment['alignmentParts']=[dict(text=p['text'],start=start+p['start'],end=start+p['end']) for p in parts]
         except (AlignmentWindowError,ValueError) as error:
-            # Recognition remains authoritative; optional speaker/timestamp
-            # analysis must not invent timing or erase this completed text.
             segment['alignmentIssue']=str(error)
             print('Bounded alignment preparation unavailable: '+str(error),file=sys.stderr,flush=True)
     return segment
 
-def transcribe_stream(model_path,language,output,hints_path):
+def recover_split(model,audio,start,end,language,hotwords,cut,budget):
+        # Do not discard repeat-recovery candidates belonging to a child.
+        overlap=min(2*RATE,cut//3,(len(audio)-cut)//3)
+        left_end=cut+overlap;right_start=cut-overlap
+        left=recognized_segment(model,audio[:left_end],start=start,end=start+left_end/RATE,language=language,hotwords=hotwords,_budget=budget)
+        right=recognized_segment(model,audio[right_start:],start=start+right_start/RATE,end=end,language=language,hotwords=hotwords,_budget=budget)
+        # Exact-only overlap avoids dropping a new word on a fuzzy match.
+        a=''.join(c.casefold() for c in left['text'] if unicodedata.category(c)[0] in 'LN')
+        indexed=[(x,i) for i,c in enumerate(right['text']) if unicodedata.category(c)[0] in 'LN' for x in c.casefold()]
+        b=''.join(x for x,_ in indexed);tail=right['text'];matched=False
+        for n in range(min(65,len(a),len(b)),2,-1):
+            chinese=language=='Chinese' and any('\u3400'<=c<='\u9fff' for c in b[:n])
+            if n<(3 if chinese else 6):continue
+            if a[-n:]==b[:n]:
+                pos=indexed[n-1][1]+1
+                while pos<len(right['text']) and unicodedata.category(right['text'][pos])[0] not in 'LN':pos+=1
+                tail=right['text'][pos:];matched=True;break
+        if not matched:
+            # Do not guess ownership of speech at an ambiguous seam. A very
+            # quiet overlap is safe to concatenate; otherwise retry upstream.
+            samples=audio[right_start:left_end]
+            peak=max((abs(float(x)) for x in samples),default=0)
+            if peak>2.0/32768.0:
+                raise SeamAmbiguous('Transcript token limit reached; overlap could not be reconciled; partial result not saved')
+            tail=right['text']
+        parts=[]
+        for child,body in ((left,left['text']),(right,tail)):
+            if not child['text']:continue
+            pieces=child.get('alignmentParts') or [dict(text=child['text'],start=child['start'],end=child['end'])]
+            removed=len(child['text'])-len(body)
+            trimmed=[]
+            for piece in pieces:
+                drop=min(removed,len(piece['text']));removed-=drop
+                if piece['text'][drop:]:trimmed.append(dict(piece,text=piece['text'][drop:]))
+            pieces=trimmed
+            if removed or ''.join(p['text'] for p in pieces)!=body:
+                raise ValueError('Incomplete overlap text; partial result not saved')
+            if not pieces:continue
+            if parts and parts[-1]['text'][-1:].isascii() and not parts[-1]['text'][-1:].isspace() and pieces[0]['text'][:1].isascii() and pieces[0]['text'][:1].isalnum():
+                pieces[0]=dict(pieces[0],text=' '+pieces[0]['text'])
+            parts.extend(pieces)
+        segment=dict(text=''.join(p['text'] for p in parts),start=start,end=end)
+        if suspicious_repetition(segment['text']):
+            raise SeamAmbiguous('Transcript token limit reached; suspicious repeated decoding; partial result not saved')
+        if parts:segment['alignmentParts']=parts
+        return segment
+
+def fallback_resources(model_root):
+    executable=pathlib.Path(sys.executable).with_name('paraformer-live')
+    model=model_root.parent/'Paraformer'
+    # Test/development launchers may use a Python interpreter outside the app.
+    if not getattr(sys,'frozen',False):
+        executable=pathlib.Path(os.environ.get('TALKTUCK_PARAFORMER_EXECUTABLE') or executable)
+        model=pathlib.Path(os.environ.get('TALKTUCK_PARAFORMER_MODEL') or model)
+    return executable,model
+
+def paraformer_fallback(data,clip,language,model_root):
+    """Use the existing local preview engine without logging its text."""
+    if language not in ('zh','en','auto'):raise ValueError('Local fallback unavailable for this language')
+    executable,model=fallback_resources(model_root)
+    if not executable.is_file() or not model.is_dir():raise ValueError('Local fallback engine unavailable')
+    frames=clip['frames'];chunks=[]
+    for begin in range(0,frames,4096):
+        count=min(4096,frames-begin);chunks.append(struct.pack('<I',count));chunks.append(data[begin*4:(begin+count)*4])
+    child=None;previous=signal.getsignal(signal.SIGTERM)
+    def cancel(signum,_):
+        if child and child.poll() is None:
+            child.terminate()
+            try:child.wait(timeout=3)
+            except subprocess.TimeoutExpired:child.kill();child.wait()
+        raise SystemExit(128+signum)
+    try:
+        child=subprocess.Popen([str(executable),'--offline-preview',str(model),language],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+        signal.signal(signal.SIGTERM,cancel)
+        output,_=child.communicate(b''.join(chunks),timeout=max(90,math.ceil((clip['end']-clip['start'])*3)))
+        if child.returncode or len(output)>4*1024*1024:raise ValueError('Local fallback failed')
+    except (OSError,subprocess.TimeoutExpired):
+        if child and child.poll() is None:child.kill();child.wait()
+        raise ValueError('Local fallback failed')
+    finally:signal.signal(signal.SIGTERM,previous)
+    parts=[];duration=clip['end']-clip['start'];done=False
+    for line in output.splitlines():
+        if len(line)>65536:raise ValueError('Invalid local fallback result')
+        try:item=json.loads(line)
+        except (ValueError,UnicodeError):raise ValueError('Invalid local fallback result')
+        if not isinstance(item,dict):raise ValueError('Invalid local fallback result')
+        if item.get('type')=='done':
+            if done:raise ValueError('Invalid local fallback result')
+            final=item.get('end')
+            if isinstance(final,bool) or not isinstance(final,(int,float)) or not math.isfinite(final) or abs(final-duration)>.1:raise ValueError('Incomplete local fallback coverage')
+            done=True;continue
+        if item.get('type')!='commit':continue
+        if done:raise ValueError('Invalid local fallback result')
+        text=item.get('text');start=item.get('start');end=item.get('end')
+        if not isinstance(text,str) or isinstance(start,bool) or isinstance(end,bool) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not (math.isfinite(start) and math.isfinite(end) and 0<=start<min(end,duration) and end<=duration+.1):raise ValueError('Invalid local fallback result')
+        text=text.strip()
+        if parts and clip['start']+start<parts[-1]['start']-.15:raise ValueError('Invalid local fallback result')
+        if text:parts.append(dict(text=('\n' if parts else '')+text,start=clip['start']+start,end=min(clip['end'],clip['start']+end)))
+    if not done:raise ValueError('Incomplete local fallback coverage')
+    segment=dict(text=''.join(p['text'] for p in parts),start=clip['start'],end=clip['end'],fallback=True)
+    if parts:segment['alignmentParts']=parts
+    return segment
+
+def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None):
     import numpy as np
     import mlx.core as mx
     from mlx_audio.stt import load
@@ -124,12 +277,96 @@ def transcribe_stream(model_path,language,output,hints_path):
     if not isinstance(context,str) or len(context)>2000:raise ValueError('Invalid hotword context')
     recover_repeats=hints.get('recoverRepeatedOutput',False)
     if not isinstance(recover_repeats,bool):raise ValueError('Invalid repeat recovery option')
+    allow_fallback=hints.get('allowParaformerFallback',False)
+    if not isinstance(allow_fallback,bool):raise ValueError('Invalid fallback option')
     configure_memory(mx)
-    model=load(pathlib.Path(model_path).resolve(strict=True));selected_language=recognition_language(language);result=[]
-    for clip,data in stream_clips():
-        segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=select_hotwords(words,context) or None,recover_repeats=recover_repeats)
+    model_root=pathlib.Path(model_path).resolve(strict=True)
+    checkpoint=pathlib.Path(checkpoint_path) if checkpoint_path else None
+    if checkpoint:
+        try:
+            if checkpoint.resolve()!=checkpoint.absolute():raise OSError('Invalid checkpoint directory')
+            checkpoint.mkdir(mode=0o700,parents=True,exist_ok=True)
+            if checkpoint.resolve()!=checkpoint.absolute() or not checkpoint.is_dir():raise OSError('Invalid checkpoint directory')
+        except OSError:
+            checkpoint=None
+            print('Qwen3-ASR: checkpoint unavailable',file=sys.stderr,flush=True)
+    model_state=[]
+    if checkpoint:
+        # A restored result must be bound to model bytes, not just a filename
+        # or a timestamp which can survive a model replacement.
+        for path in sorted(model_root.iterdir()):
+            if not path.is_file():continue
+            before=path.stat();digest=hashlib.sha256()
+            with path.open('rb') as model_file:
+                for block in iter(lambda:model_file.read(1024*1024),b''):digest.update(block)
+            after=path.stat()
+            if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise ValueError('Model changed while checking transcription checkpoint')
+            model_state.append((path.name,digest.hexdigest()))
+    fallback_state=[]
+    if checkpoint and allow_fallback:
+        fallback_executable,fallback_model=fallback_resources(model_root)
+        try:
+            for path in [fallback_executable]+[fallback_model/name for name in ('encoder.int8.onnx','decoder.int8.onnx','tokens.txt','silero_vad.onnx')]:
+                before=path.stat();digest=hashlib.sha256()
+                with path.open('rb') as f:
+                    for block in iter(lambda:f.read(1024*1024),b''):digest.update(block)
+                after=path.stat()
+                if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise OSError('Fallback changed')
+                fallback_state.append((path.name,digest.hexdigest()))
+        except OSError:fallback_state=[]
+    runtime_hash=hashlib.sha256()
+    if checkpoint:
+        with pathlib.Path(sys.executable).open('rb') as executable_file:
+            for block in iter(lambda:executable_file.read(1024*1024),b''):runtime_hash.update(block)
+    source_root=pathlib.Path(__file__).resolve().parent
+    code_state=[]
+    for name in (('worker.py','inference_policy.py','repeat_recovery.py','alignment_windows.py','language_policy.py') if checkpoint else ()):
+        source=source_root/name
+        if source.is_file():code_state.append((name,hashlib.sha256(source.read_bytes()).hexdigest()))
+    model=load(model_root);selected_language=recognition_language(language);result=[];reused=0
+    for index,(clip,data) in enumerate(stream_clips()):
+        selected=select_hotwords(words,context) or None
+        identity=json.dumps([4,clip,language,selected,context,recover_repeats,allow_fallback,model_state,fallback_state,runtime_hash.hexdigest(),code_state],sort_keys=True,ensure_ascii=False).encode()
+        key=hashlib.sha256(identity+data).hexdigest()
+        # At most 8192 files of 64 KiB per imported file (512 MiB).
+        entry=checkpoint/('%08d.json'%index) if checkpoint and index<8192 else None
+        if checkpoint and index==8192:print('Qwen3-ASR: checkpoint limit reached',file=sys.stderr,flush=True)
+        segment=None
+        if entry and not entry.is_symlink():
+            try:
+                if entry.stat().st_size<=64*1024:
+                    cached=json.loads(entry.read_text())
+                    candidate=cached['segment']
+                    checksum=hashlib.sha256(json.dumps(candidate,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                    if cached['key']==key and cached['checksum']==checksum and isinstance(candidate.get('text'),str) and candidate.get('start')==clip['start'] and candidate.get('end')==clip['end']:
+                        segment=candidate
+            except (OSError,ValueError,KeyError,TypeError,AttributeError):pass
+        if segment is None:
+            try:
+                segment=recognized_segment(model,np.frombuffer(data,dtype='<f4'),start=clip['start'],end=clip['end'],language=selected_language,hotwords=selected,recover_repeats=recover_repeats)
+            except TokenLimitReached:
+                if not allow_fallback:raise
+                segment=paraformer_fallback(data,clip,language,model_root)
+                print('Qwen3-ASR: local preview fallback used',file=sys.stderr,flush=True)
+            if entry and not entry.is_symlink():
+                try:
+                    checksum=hashlib.sha256(json.dumps(segment,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                    encoded=json.dumps(dict(key=key,segment=segment,checksum=checksum),ensure_ascii=False).encode()
+                    if len(encoded)<=64*1024:
+                        temporary=checkpoint/('%08d.partial'%index)
+                        if temporary.is_symlink():raise OSError('Invalid checkpoint')
+                        fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_TRUNC|os.O_NOFOLLOW,0o600)
+                        with os.fdopen(fd,'wb') as f:f.write(encoded);f.flush();os.fsync(f.fileno())
+                        os.replace(temporary,entry)
+                    else:print('Qwen3-ASR: checkpoint too large',file=sys.stderr,flush=True)
+                except OSError:
+                    print('Qwen3-ASR: checkpoint unavailable',file=sys.stderr,flush=True)
+        else:
+            reused+=1
+            if reused%100==0:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
         result.append(segment)
         context=(context+' '+segment['text'])[-2000:];mx.clear_cache()
+    if reused:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
     output=pathlib.Path(output);temp=output.with_suffix('.partial')
     temp.write_text(json.dumps({'segments':result},ensure_ascii=False));temp.replace(output)
 
@@ -300,7 +537,7 @@ def main():
         diarize(sys.argv[2],None,sys.argv[3],streaming=True,checkpoint=sys.argv[4]);return
     if len(sys.argv)==6 and sys.argv[1]=='--diarize-checkpoint':
         diarize(sys.argv[2],sys.argv[3],sys.argv[4],checkpoint=sys.argv[5]);return
-    if len(sys.argv)==6 and sys.argv[1]=='--transcribe-stream':
+    if len(sys.argv) in (6,7) and sys.argv[1]=='--transcribe-stream':
         transcribe_stream(*sys.argv[2:]);return
     if len(sys.argv)==5 and sys.argv[1]=='--align-stream':
         align_stream(*sys.argv[2:]);return

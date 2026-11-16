@@ -30,6 +30,9 @@ import AVFoundation
         precondition(short.paragraphs.first?.start == 0 && short.paragraphs.last?.end == 400)
         precondition(shortAttempts.dropFirst().allSatisfy { ($0["end"] as! Double)-($0["start"] as! Double) <= 12.001 })
         precondition(!TranscriptionEngine.isRecoverableWindowFailure(CancellationError()))
+        precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.message("Transcript token limit reached; seam retry budget exhausted; partial result not saved")))
+        precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.message("Transcript token limit reached; suspicious repeated decoding; partial result not saved")))
+        precondition(!TranscriptionEngine.isRecoverableWindowFailure(TranscriptionError.workerFailure(stage:"Qwen",status:1,details:"Transcript token limit reached; seam retry budget exhausted")))
         print("PASS: no truncated text published, finite failed-batch-only decoder recovery, 120s windows with 3s context cover all 400s")
     }
 }

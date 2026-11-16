@@ -68,6 +68,7 @@ private final class ProgressiveCalls: @unchecked Sendable {
         // Import uses an absolute timeline end so stop cannot double duration.
         let library=try MeetingLibrary(root:root.appendingPathComponent("CommitLibrary"))
         var base=MeetingRecord(title:"Base",text:"原文",duration:7,status:.recording)
+        base.transcriptionEngine="qwen3-asr-1.7b-8bit+paraformer-fallback"
         base=ProgressiveTranscriptCommit.normalizedBase(base)
         base=try library.save(base);var record=base
         var shifted=final.paragraphs
@@ -91,6 +92,7 @@ private final class ProgressiveCalls: @unchecked Sendable {
         let file=record.audioFiles.last!
         try ProgressiveTranscriptCommit.apply(committed,base:base,expectedText:expected,audioFile:file,complete:true,recording:false,to:&record)
         _=try library.save(record);let saved=try library.load(record.id)
+        precondition(saved.transcriptionEngine?.contains("paraformer-fallback") == true,"Later recording must retain fallback provenance")
         precondition(saved.duration==57 && saved.audioFiles.count==1 && saved.pendingAudioFiles.isEmpty && saved.title=="用户新标题")
         precondition(saved.hasCurrentParagraphs && saved.text==expected && saved.transcriptParagraphs.dropFirst().allSatisfy{$0.audioFile==file})
         let published=try AgentDataPublisher.snapshot(saved,libraryRoot:root.appendingPathComponent("CommitLibrary"))
