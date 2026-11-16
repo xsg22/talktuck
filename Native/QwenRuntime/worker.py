@@ -268,7 +268,7 @@ def paraformer_fallback(data,clip,language,model_root):
     if parts:segment['alignmentParts']=parts
     return segment
 
-def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None):
+def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None,progress_path=None):
     import numpy as np
     import mlx.core as mx
     from mlx_audio.stt import load
@@ -323,7 +323,7 @@ def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None
     for name in (('worker.py','inference_policy.py','repeat_recovery.py','alignment_windows.py','language_policy.py') if checkpoint else ()):
         source=source_root/name
         if source.is_file():code_state.append((name,hashlib.sha256(source.read_bytes()).hexdigest()))
-    model=load(model_root);selected_language=recognition_language(language);result=[];reused=0
+    model=load(model_root);selected_language=recognition_language(language);result=[];reused=0;progress_bytes=0
     for index,(clip,data) in enumerate(stream_clips()):
         selected=select_hotwords(words,context) or None
         identity=json.dumps([4,clip,language,selected,context,recover_repeats,allow_fallback,model_state,fallback_state,runtime_hash.hexdigest(),code_state],sort_keys=True,ensure_ascii=False).encode()
@@ -365,6 +365,24 @@ def transcribe_stream(model_path,language,output,hints_path,checkpoint_path=None
             reused+=1
             if reused%100==0:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
         result.append(segment)
+        # This private, task-scoped channel is separate from diagnostic logs.
+        # Publishing a preview must never prevent transcription from completing.
+        if progress_path:
+            try:
+                directory=pathlib.Path(progress_path)
+                text=segment['text']
+                payload=json.dumps({'index':index,'start':clip['start'],'end':clip['end'],'text':text[:24000],'truncated':len(text)>24000,'fallback':bool(segment.get('fallback',False))},ensure_ascii=False).encode()
+                if index>=8192 or len(payload)>128*1024 or progress_bytes+len(payload)>16*1024*1024:raise ValueError('Preview limit')
+                temporary=directory/('%08d.partial'%index)
+                fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+                with os.fdopen(fd,'wb') as f:f.write(payload)
+                os.replace(temporary,directory/('%08d.json'%index));progress_bytes+=len(payload)
+            except Exception:
+                try:
+                    fd=os.open(pathlib.Path(progress_path)/'unavailable',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600);os.close(fd)
+                except OSError:pass
+                print('Qwen3-ASR: preview unavailable',file=sys.stderr,flush=True)
+                progress_path=None
         context=(context+' '+segment['text'])[-2000:];mx.clear_cache()
     if reused:print('Qwen3-ASR: checkpoints reused=%d'%reused,file=sys.stderr,flush=True)
     output=pathlib.Path(output);temp=output.with_suffix('.partial')
@@ -537,7 +555,7 @@ def main():
         diarize(sys.argv[2],None,sys.argv[3],streaming=True,checkpoint=sys.argv[4]);return
     if len(sys.argv)==6 and sys.argv[1]=='--diarize-checkpoint':
         diarize(sys.argv[2],sys.argv[3],sys.argv[4],checkpoint=sys.argv[5]);return
-    if len(sys.argv) in (6,7) and sys.argv[1]=='--transcribe-stream':
+    if len(sys.argv) in (6,7,8) and sys.argv[1]=='--transcribe-stream':
         transcribe_stream(*sys.argv[2:]);return
     if len(sys.argv)==5 and sys.argv[1]=='--align-stream':
         align_stream(*sys.argv[2:]);return

@@ -232,11 +232,19 @@ struct MainView: View {
                         }.font(AppTypography.secondary).foregroundStyle(.orange).padding(14)
                             .background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                     } else if state.busy && state.isViewingActiveTask {
-                        HStack(spacing: 12) {
-                            ProgressView().controlSize(.small)
-                            Text(L10n.processingStatus(state.status) + L10n.text(" · 音频已保存，可取消处理后稍后重试。"))
-                            Button(L10n.text([TranscriptPhase.diarizing, .aligning].contains(state.transcriptPhase) ? "取消分析" : "取消转录")) { state.cancel() }
-                            Spacer(minLength: 0)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 12) {
+                                ProgressView().controlSize(.small)
+                                Text(L10n.processingStatus(state.status) + L10n.text(" · 音频已保存，可取消处理后稍后重试。"))
+                                Button(L10n.text([TranscriptPhase.diarizing, .aligning].contains(state.transcriptPhase) ? "取消分析" : "取消转录")) { state.cancel() }
+                                Spacer(minLength: 0)
+                            }
+                            if let progress = state.offlineRecognitionProgress, progress.unavailable, state.transcriptPhase == .recognizing {
+                                Text(L10n.text("预览暂不可用，转录继续进行。"))
+                            } else if let progress = state.offlineRecognitionProgress, progress.totalSeconds > 0, state.transcriptPhase == .recognizing {
+                                ProgressView(value: progress.processedSeconds, total: progress.totalSeconds)
+                                Text(L10n.format("当前音频已识别至 {0}", (progress.processedSeconds / progress.totalSeconds).formatted(.percent.precision(.fractionLength(0)).locale(L10n.locale))))
+                            }
                         }.font(AppTypography.secondary).foregroundStyle(accent).padding(14)
                             .background(accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                     }

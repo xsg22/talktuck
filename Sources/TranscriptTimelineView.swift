@@ -126,6 +126,13 @@ struct TranscriptTimelineView: View {
                         if history { historyRows }
                         else {
                             finalRows
+                            if selectedProcessing, state.transcriptPhase == .recognizing, let progress = state.offlineRecognitionProgress, !progress.preview.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(L10n.text("识别预览，最终结果可能变化")).font(AppTypography.secondary).foregroundStyle(.secondary)
+                                    if progress.truncated { Text(L10n.text("部分预览文字已截断")).font(AppTypography.secondary).foregroundStyle(.secondary) }
+                                    Text(progress.preview).font(AppTypography.transcript).lineSpacing(7).textSelection(.enabled)
+                                }.padding(.vertical, 12)
+                            }
                             if showingLive { currentLiveRows }
                         }
                         Color.clear.frame(height: 1).id("transcript-tail")
@@ -138,6 +145,7 @@ struct TranscriptTimelineView: View {
                 }
             }
             .onChange(of: state.displayedLiveText) { if following && (showingLive || history) { proxy.scrollTo("transcript-tail", anchor: .bottom) } }
+            .onChange(of: state.offlineRecognitionProgress?.processedSeconds) { if following && selectedProcessing { proxy.scrollTo("transcript-tail", anchor: .bottom) } }
             .onChange(of: following) { if following { proxy.scrollTo("transcript-tail", anchor: .bottom) } }
         }
     }

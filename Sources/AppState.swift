@@ -123,6 +123,9 @@ final class AppState: ObservableObject {
     @Published var liveText = ""
     @Published var livePartial = ""
     @Published var transcriptPhase: TranscriptPhase = .idle
+    @Published private(set) var offlineRecognitionProgress: OfflineRecognitionProgress?
+    private var offlineProgressFileIndex: Int?
+    private var offlineProgressMilestone = 0
     private var transcriptionGeneration: UUID?
     private var recordingBaseDuration: Double = 0
     private var liveSegmentOffset: Double = 0
@@ -684,6 +687,7 @@ final class AppState: ObservableObject {
         queueEvent("transcription-start", id: id, phase: "recognition", outcome: wasQueued ? "dequeued" : (wasRetry ? "retry" : "requested"))
         busy = true; elapsed = 0; transcriptPhase = .recognizing
         let generation = UUID(); transcriptionGeneration = generation
+        offlineRecognitionProgress = nil; offlineProgressFileIndex = nil; offlineProgressMilestone = 0
         status = "正在本地识别…"
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.elapsed += 1 }
@@ -703,18 +707,33 @@ final class AppState: ObservableObject {
                 var durations: [Double] = []
                 for (index, url) in urls.enumerated() {
                     try Task.checkCancellation()
+                    offlineRecognitionProgress = nil; offlineProgressFileIndex = index; offlineProgressMilestone = 0
                     status = "正在本地识别第 \(index + 1)/\(urls.count) 段录音…"
                     let duration = try await Task.detached(priority: .utility) { try CaptureRecovery.audioDuration(url) }.value
                     guard duration.isFinite, duration >= 0 else { throw TranscriptionError.message("录音时长无效。") }
                     let output = try await withTaskCancellationHandler {
                         try await Task.detached(priority: .userInitiated) {
                             let checkpoint = library.root.appendingPathComponent("TranscriptionCheckpoints", isDirectory: true).appendingPathComponent(id.uuidString, isDirectory: true).appendingPathComponent(String(index), isDirectory: true)
-                            return try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true, checkpointDirectory: checkpoint, allowParaformerFallback: allowParaformerFallback)
+                            return try engine.transcribeBatch(audio: url, model: model, executable: executable, language: selectedLanguage, hotwords: selectedHotwords, context: initialHotwordContext, windowSeconds: ASRWindowPolicy.load(language: selectedLanguage).offlineSeconds, initialOverlapSeconds: ASRWindowPolicy.load(language: selectedLanguage).overlapSeconds, recoverRepeatedOutput: true, checkpointDirectory: checkpoint, allowParaformerFallback: allowParaformerFallback, onProgress: { [weak self] progress in
+                                DispatchQueue.main.async {
+                                    guard let self, self.transcriptionGeneration == generation, self.offlineProgressFileIndex == index, self.busy, self.transcriptPhase == .recognizing else { return }
+                                    self.offlineRecognitionProgress = progress
+                                    if progress.totalSeconds == 0 { self.offlineProgressMilestone = 0 }
+                                    else if !progress.unavailable {
+                                        let milestone = min(4, Int(progress.processedSeconds / progress.totalSeconds * 4))
+                                        if milestone > self.offlineProgressMilestone {
+                                            self.offlineProgressMilestone = milestone
+                                            self.queueEvent("recognition-progress", id: id, phase: "recognition", outcome: "audio-\(milestone * 25)-percent", elapsed: self.transcriptionDiagnosticStart.map { QueueDiagnostics.elapsed(since: $0) })
+                                        }
+                                    }
+                                }
+                            })
                         }.value
                     } onCancel: { engine.cancel() }
                     outputs.append(output); durations.append(duration)
                 }
                 try Task.checkCancellation()
+                offlineRecognitionProgress = nil; offlineProgressFileIndex = nil
                 guard outputs.contains(where: { !$0.text.isEmpty }) else { throw TranscriptionError.message("未识别到语音。请检查音频是否有清晰人声。") }
                 saveEdits()
                 var latest = try library.load(id)
@@ -802,6 +821,7 @@ final class AppState: ObservableObject {
                 }
             }
             transcriptionGeneration = nil
+            offlineRecognitionProgress = nil; offlineProgressFileIndex = nil
             timer?.invalidate(); timer = nil; busy = false; self.engine = nil; task = nil
             transcriptionRecordingID = nil
             transcriptionDiagnosticStart = nil

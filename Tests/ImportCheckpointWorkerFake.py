@@ -1,10 +1,11 @@
 #!/usr/bin/python3
-import os,pathlib,sys,types
+import os,pathlib,sys,types,time
 sys.path.insert(0,os.environ['TALKTUCK_TEST_RUNTIME'])
 import worker
 
 class Model:
     def generate(self,*,audio,**kw):
+        time.sleep(float(os.environ.get('TALKTUCK_TEST_DELAY','0')))
         calls=pathlib.Path(os.environ['TALKTUCK_TEST_CALLS'])
         count=len(calls.read_text().splitlines()) if calls.exists() else 0
         with calls.open('a') as f:f.write('inference\n')
