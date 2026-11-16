@@ -243,7 +243,7 @@ struct MainView: View {
                                 Text(L10n.text("预览暂不可用，转录继续进行。"))
                             } else if let progress = state.offlineRecognitionProgress, progress.totalSeconds > 0, state.transcriptPhase == .recognizing {
                                 ProgressView(value: progress.processedSeconds, total: progress.totalSeconds)
-                                Text(L10n.format("当前音频已识别至 {0}", (progress.processedSeconds / progress.totalSeconds).formatted(.percent.precision(.fractionLength(0)).locale(L10n.locale))))
+                                Text(L10n.format("当前音频已识别至 {0}（{1} / {2}）", (progress.processedSeconds / progress.totalSeconds).formatted(.percent.precision(.fractionLength(0)).locale(L10n.locale)), clock(progress.processedSeconds), clock(progress.totalSeconds)))
                             }
                         }.font(AppTypography.secondary).foregroundStyle(accent).padding(14)
                             .background(accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
