@@ -38,6 +38,13 @@ import Foundation
         state.error = nil; state.playbackVolume = 0
         state.select(active.id); state.bindRecordingContext(to: active.id)
         state.recording = true; state.liveEnabled = false
+        check(state.canImportAudio && state.shouldQueueImportedAudio)
+        state.useAudio(source); state.useAudio(source)
+        await state.waitForAudioImports()
+        let imported = state.history.filter { $0.source == .imported && $0.queuedTranscriptionAt != nil }
+        check(imported.count == 2, "录音期间导入的两条音频应排队")
+        check(state.recording && capture.state == .recording && state.selection == active.id && state.activeRecordingID == active.id,
+              "导入不能停止采集或切换当前录音")
         state.handleLiveEvent(.init(type: "commit", text: "A 的确认句", start: 0, end: 1), meetingID: active.id)
         state.handleLiveEvent(.init(type: "partial", text: "A 的草稿", start: 1, end: 2), meetingID: active.id)
         let recordingPreview = state.miniTranscriptPreview
@@ -78,6 +85,8 @@ import Foundation
         state.toggleRecording()
         for _ in 0..<300 where state.recording || state.preparing { try await Task.sleep(nanoseconds: 20_000_000) }
         check(!state.recording && !state.preparing)
+        check(imported.allSatisfy { id in state.history.contains { $0.id == id.id && $0.queuedTranscriptionAt != nil } },
+              "模型不可用时排队录音须保留以便恢复")
         check(state.selection == historic.id && state.text == historic.text && state.title == historic.title)
         check(state.liveText == historic.previewText && state.livePartial.isEmpty)
         active = try library.load(active.id)

@@ -220,8 +220,8 @@ final class AppState: ObservableObject {
         }
     }
     var locked: Bool { busy || recording || preparing || quitting || recoveryBusy || continuousWorker != nil }
-    var canImportAudio: Bool { !recording && !preparing && !quitting && !recoveryBusy && continuousWorker == nil }
-    var shouldQueueImportedAudio: Bool { busy || queuedImportCount > 0 }
+    var canImportAudio: Bool { !quitting && !recoveryBusy && (!preparing || recording) }
+    var shouldQueueImportedAudio: Bool { recording || preparing || busy || continuousWorker != nil || queuedImportCount > 0 }
     var canRetryMicrophone: Bool { recording && paused && recorder.canRetryMicrophone }
     var canSyncFinalTranscript: Bool {
         !locked && !syncing && current?.status == .completed && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

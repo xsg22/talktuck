@@ -128,7 +128,7 @@ struct MainView: View {
                     Label(L10n.text("导入音频…"), systemImage: "doc.badge.plus").frame(maxWidth: .infinity)
                 }.buttonStyle(TalkTuckSecondaryButtonStyle()).disabled(!state.canImportAudio)
                     .accessibilityIdentifier("sidebar-import-audio")
-                if state.busy {
+                if state.canImportAudio && state.shouldQueueImportedAudio {
                     Text(L10n.text("新导入的音频将排队转录"))
                         .font(AppTypography.secondary).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

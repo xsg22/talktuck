@@ -58,7 +58,11 @@ import AVFoundation
         let afterChooser = try library.list().first { $0.title == "three" }
         precondition(afterChooser?.queuedTranscriptionAt != nil && afterChooser?.status == .recorded)
         state.recording = true
-        precondition(!state.canImportAudio)
+        precondition(state.canImportAudio && state.shouldQueueImportedAudio)
+        state.preparing = true
+        precondition(state.canImportAudio && state.shouldQueueImportedAudio, "the recording may finish while the file chooser is open")
+        state.recording = false
+        precondition(!state.canImportAudio, "a new recording's preparation still protects its setup")
         print("PASS: imports remain ordered and persisted during transcription; originals and active selection preserved")
     }
 }
