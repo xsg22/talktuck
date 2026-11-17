@@ -107,6 +107,21 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     var syncedAudio: LibraryAudioArchive? = nil
     var source: RecordingOrigin = .macos
     var transcriptOrigin: TranscriptionOrigin = .local
+    /// The phone's last reported state, not a live Mac transcription job.
+    var lanTranscriptionState: String? = nil
+    var lanTranscriptionLabel: String? {
+        switch lanTranscriptionState {
+        case "notRequested": return "手机尚未转录"
+        case "queued": return "手机等待转录"
+        case "processing": return "手机转录中"
+        case "ready": return "手机转录已完成"
+        case "noSpeech": return "手机未检测到语音"
+        case "failed": return "手机转录失败"
+        case "needsModel": return "手机缺少转录模型"
+        case "interrupted": return "手机转录已中断"
+        default: return nil
+        }
+    }
     var actionItems: [MeetingActionItem] = []
     var attachments: [MeetingAttachment] = []
     var recoveryMessage: String? = nil
@@ -159,7 +174,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case identitySchemaVersion, groupID, customSpeakerNameIDs, userId, syncContent, syncedAudio, source, transcriptOrigin
+        case identitySchemaVersion, groupID, customSpeakerNameIDs, userId, syncContent, syncedAudio, source, transcriptOrigin, lanTranscriptionState
         case captureWarnings, id, title, created, text, subtitles, language, seconds, duration, notes, summary, isStarred, actionItems, attachments
         case legacyLiveText, liveUtterances, transcriptParagraphs, originalRecognitionCandidates, speakerNames, speakerAliases, speakerAnalysisStatus, speakerAnalysisMessage
         case importedCaptureSessions, transcriptionEngine, previewEngine, pendingAudioFiles, audioDurations, audioFiles, recordingSessionMode, continuousSegmentFiles, status, recoveryMessage, updated, previewText, enhancedNotes, assistantEntries, summaryCitations, enhancedNotesCitations, summaryContextWasTruncated, enhancedNotesContextWasTruncated
@@ -203,6 +218,7 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
         syncContent = try values.decodeIfPresent(LibrarySyncRecording.self, forKey: .syncContent)
         source = try values.decodeIfPresent(RecordingOrigin.self, forKey: .source) ?? syncContent.flatMap { RecordingOrigin(rawValue:$0.source) } ?? .macos
         transcriptOrigin = try values.decodeIfPresent(TranscriptionOrigin.self, forKey: .transcriptOrigin) ?? (syncContent == nil ? .local : .remote)
+        lanTranscriptionState = try values.decodeIfPresent(String.self, forKey: .lanTranscriptionState)
         isStarred = try values.decodeIfPresent(Bool.self, forKey: .isStarred) ?? false
         actionItems = try values.decodeIfPresent([MeetingActionItem].self, forKey: .actionItems) ?? []
         attachments = try values.decodeIfPresent([MeetingAttachment].self, forKey: .attachments) ?? []

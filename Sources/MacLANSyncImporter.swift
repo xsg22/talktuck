@@ -11,8 +11,30 @@ import CryptoKit
     private let library: MeetingLibrary
     init(library: MeetingLibrary) { self.library = library }
 
+    func canReuseAudio(_ incoming: LANSyncRecord) async throws -> Bool {
+        let target = library.directory(for: incoming.id)
+        let url = target.appendingPathComponent("lan-sync-base.json")
+        guard let data = try? Data(contentsOf: url), let base = try? JSONDecoder().decode(Baseline.self, from: data),
+              base.remote.id == incoming.id, base.remote.audio == incoming.audio,
+              base.remote.entryPoint == incoming.entryPoint,
+              let current = try? library.load(incoming.id, includingHidden: true),
+              current.status != .recording, current.status != .transcribing,
+              current.audioFiles == base.projected.audioFiles else { return false }
+        let worker = Task.detached(priority: .utility) { try Self.verifyExisting(base.remote, target: target, audioFiles: current.audioFiles) }
+        do { try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() } }
+        catch is CancellationError { throw CancellationError() }
+        catch { return false }
+        try Task.checkCancellation()
+        return (try? Data(contentsOf: url)) == data && (try? library.load(incoming.id, includingHidden: true)) == current
+    }
+
     func install(_ incoming: LANSyncRecord, files: [URL]) async throws {
         try incoming.validate()
+        if files.isEmpty {
+            guard FileManager.default.fileExists(atPath: library.directory(for: incoming.id).path) else { throw Failure.conflict }
+            try await updateExisting(incoming, target: library.directory(for: incoming.id))
+            return
+        }
         guard files.count == incoming.audio.count else { throw Failure.invalidAudio }
         let verifyWorker = Task.detached(priority: .utility) {
             for (index, file) in files.enumerated() { try LANSyncIntegrity.verify(file, against: incoming.audio[index]) }
@@ -57,6 +79,10 @@ import CryptoKit
               (try? Data(contentsOf: url)) == data else { throw Failure.conflict }
         if incoming == base.remote { return }
         let next = Self.project(incoming, audioFiles: base.projected.audioFiles)
+        local.lanTranscriptionState = next.lanTranscriptionState
+        if local.status == base.projected.status && local.text == base.projected.text && local.transcriptParagraphs == base.projected.transcriptParagraphs {
+            local.status = next.status
+        }
         if local.title == base.projected.title { local.title = next.title }
         if local.summary == base.projected.summary { local.summary = next.summary }
         if (incoming.paragraphs != base.remote.paragraphs || incoming.transcriptOrigin != base.remote.transcriptOrigin) &&
@@ -106,9 +132,11 @@ import CryptoKit
     private nonisolated static func project(_ input: LANSyncRecord, audioFiles: [String]) -> MeetingRecord {
         var result = MeetingRecord(id: input.id, title: input.title, created: input.createdAt,
             text: "", language: input.language, duration: Double(input.durationMs) / 1000,
-            summary: input.summary, audioFiles: audioFiles, status: .completed)
+            summary: input.summary, audioFiles: audioFiles,
+            status: ["ready", "noSpeech"].contains(input.transcriptionState ?? (input.paragraphs.isEmpty ? "notRequested" : "ready")) ? .completed : .recorded)
         result.source = RecordingOrigin(rawValue: input.source) ?? .unknown
         result.transcriptOrigin = TranscriptionOrigin(rawValue: input.transcriptOrigin) ?? .notGenerated
+        result.lanTranscriptionState = input.transcriptionState ?? (input.paragraphs.isEmpty ? "notRequested" : "ready")
         if audioFiles.count == input.audio.count {
             for (name, part) in zip(audioFiles, input.audio) {
                 if let ms = part.durationMs { result.audioDurations[name] = Double(ms) / 1000 }

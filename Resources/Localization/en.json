@@ -1281,5 +1281,14 @@
   "解除配对": "Unpair",
   "无法更新已配对设备": "Could not update paired devices",
   "无法保存配对，请检查设备设置": "Could not save pairing. Check your device settings.",
-  "配对信息不一致，请在两端解除配对后重试。": "Pairing does not match. Unpair on both devices and try again."
+  "配对信息不一致，请在两端解除配对后重试。": "Pairing does not match. Unpair on both devices and try again.",
+  "上次同步：{0}": "Last synced: {0}",
+  "手机尚未转录": "Phone transcription not started",
+  "手机等待转录": "Phone transcription queued",
+  "手机转录中": "Phone transcription in progress",
+  "手机转录已完成": "Phone transcription complete",
+  "手机未检测到语音": "No speech detected on phone",
+  "手机转录失败": "Phone transcription failed",
+  "手机缺少转录模型": "Phone transcription model unavailable",
+  "手机转录已中断": "Phone transcription interrupted"
 }

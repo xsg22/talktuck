@@ -23,7 +23,7 @@ import UIKit
     private let role: Role
     private let trust: LANSyncTrustStore
     private let identity = MCPeerID(displayName: UUID().uuidString)
-    private let service = "tt-lansync"
+    private let service: String
     private var session: MCSession!
     private var browser: MCNearbyServiceBrowser?
     private var advertiser: MCNearbyServiceAdvertiser?
@@ -39,8 +39,8 @@ import UIKit
     private var isRunning = false
     private var retry: Task<Void, Never>?
 
-    init(role: Role, trust: LANSyncTrustStore = LANSyncTrustStore()) {
-        self.role = role; self.trust = trust
+    init(role: Role, trust: LANSyncTrustStore = LANSyncTrustStore(), service: String = "tt-lansync") {
+        self.role = role; self.trust = trust; self.service = service
         super.init()
         trustedDevices = trust.peers.mapValues(\.name)
         session = MCSession(peer: identity, securityIdentity: nil, encryptionPreference: .required)

@@ -39,12 +39,14 @@ struct LANSyncRecord: Codable, Equatable {
     let entryPoint: [String]
     var source: String = "iphone"
     var transcriptOrigin: String = "local"
+    var transcriptionState: String? = nil
 
     func validate() throws {
         guard schemaVersion == 1, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               title.utf8.count <= 4096, language.utf8.count <= 64,
               ["iphone", "watch", "macos", "imported", "unknown"].contains(source),
               ["local", "remote", "notGenerated"].contains(transcriptOrigin),
+              (transcriptionState == nil || ["notRequested", "queued", "processing", "ready", "noSpeech", "failed", "needsModel", "interrupted"].contains(transcriptionState!)),
               durationMs >= 0, paragraphs.count <= 100_000, Set(paragraphs.map(\.id)).count == paragraphs.count,
               (summary?.utf8.count ?? 0) <= 8 * 1024 * 1024,
               !audio.isEmpty, audio.count <= 100_001 else { throw LANSyncFailure.invalidManifest }

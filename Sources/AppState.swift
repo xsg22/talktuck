@@ -357,9 +357,15 @@ final class AppState: ObservableObject {
         let root = storage.appendingPathComponent("LANIncoming", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let importer = MacLANSyncImporter(library: library)
-        return LANSyncRPC(channel: channel, stagingRoot: root) { [weak self] record, files in
+        return LANSyncRPC(channel: channel, stagingRoot: root, canReuse: { record in
+            let started = ContinuousClock.now
+            let reusable = try await importer.canReuseAudio(record)
+            let elapsed = started.duration(to: .now).components
+            FeedbackDiagnostics.shared.record("lan-sync", reusable ? "audio-reuse-verified" : "audio-required", fields: ["schema": 1, "durationMs": max(0, elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)])
+            return reusable
+        }) { [weak self] record, files in
             guard let self, self.saveEdits() else { throw MacLANSyncImporter.Failure.unavailable }
-            FeedbackDiagnostics.shared.record("lan-sync", "receive-started")
+            FeedbackDiagnostics.shared.record("lan-sync", "receive-started", fields: ["schema": 1, "reused": files.isEmpty])
             self.lanSyncMessage = "正在保存接收的录音。"
             do {
                 try await importer.install(record, files: files)

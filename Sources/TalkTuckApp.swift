@@ -170,7 +170,7 @@ struct MainView: View {
                                 .contentShape(Rectangle())
                                 .contextMenu { recordingMenu(record) }
                         }.accessibilityAddTraits(state.selection == record.id ? .isSelected : [])
-                            .accessibilityLabel(record.title + ", " + L10n.text(record.status == .completed ? "已完成，" : "待处理，") + libraryMetadata(record) + (state.organization.group(record.groupID).map { ", " + $0.name } ?? ""))
+                            .accessibilityLabel(record.title + ", " + (record.lanTranscriptionLabel.map { L10n.format("上次同步：{0}", L10n.text($0)) + ", " } ?? L10n.text(record.status == .completed ? "已完成，" : "待处理，")) + libraryMetadata(record) + (state.organization.group(record.groupID).map { ", " + $0.name } ?? ""))
                     }
                     }
                 }.focusable().focusEffectDisabled().onMoveCommand { direction in
