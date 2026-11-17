@@ -12,7 +12,7 @@ struct RecordingAppConfigurationView: View {
     init(state: AppState, initialSection: String = "recording") {
         self.state = state; _section = State(initialValue: initialSection)
     }
-    private let sections = [("recording", "录音与转录", "waveform"), ("models", "本地模型", "cpu"), ("hotwords", "个人热词", "text.book.closed"), ("talktuck", "TalkTuck 账号", "person.crop.circle"), ("accounts", "第三方账号", "link"), ("data", "Agent 与数据", "externaldrive")]
+    private let sections = [("recording", "录音与转录", "waveform"), ("models", "本地模型", "cpu"), ("hotwords", "个人热词", "text.book.closed"), ("lan", "iPhone 同步", "iphone"), ("talktuck", "TalkTuck 账号", "person.crop.circle"), ("accounts", "第三方账号", "link"), ("data", "Agent 与数据", "externaldrive")]
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
@@ -36,6 +36,7 @@ struct RecordingAppConfigurationView: View {
                     switch section {
                     case "models": models
                     case "hotwords": hotwordSettings
+                    case "lan": MacLANSyncView(state: state)
                     case "talktuck": talkTuckAccount
                     case "accounts": accounts
                     case "data": data
@@ -181,14 +182,8 @@ struct RecordingAppConfigurationView: View {
 
     private var talkTuckAccount: some View {
         Group {
-            TalkTuckPageHeader(title: L10n.text("TalkTuck 账号"), subtitle: L10n.text("登录后默认同步录音、转录、分组和原音，可随时暂停。")) { EmptyView() }
+            TalkTuckPageHeader(title: L10n.text("TalkTuck 账号"), subtitle: L10n.text("管理 TalkTuck 账号与个人热词。")) { EmptyView() }
             TalkTuckAccountPanel(store: state.cloudAccount).disabled(state.locked)
-            if state.cloudAccount.isSignedIn, state.cloudAccount.librarySyncAvailable, let engine = state.librarySync {
-                TalkTuckCard { LibrarySyncPanel(engine:engine,groupNames:Dictionary(uniqueKeysWithValues:state.organization.groups.map { ($0.id,$0.name) })) }.disabled(state.locked)
-            }
-            if state.cloudAccount.isSignedIn, let audio = state.libraryAudioSync {
-                TalkTuckCard { LibraryAudioSyncPanel(engine:audio,choices:state.history.filter { $0.userId == state.cloudAccount.userId }.map { LibrarySyncChoice(id:$0.id,title:$0.title) }) }.disabled(state.locked)
-            }
         }
     }
 

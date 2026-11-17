@@ -47,21 +47,13 @@ import Foundation
         precondition(shifted.start == nil && shifted.alignedStart == 11 && shifted.localStart == 1 && TranscriptPlaybackRange(paragraph:shifted,record:continued)?.start == 1)
         let root=(ProcessInfo.processInfo.environment["TALKTUCK_TEST_ROOT"].map { URL(fileURLWithPath:$0, isDirectory:true) } ?? FileManager.default.temporaryDirectory).appendingPathComponent("sentence-time-"+UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:root) }
-        let library=try MeetingLibrary(root:root), user=UUID()
-        let adapter=MacLibrarySyncAdapter(library:library);try adapter.activate(userId:user)
-        partial.userId=user;_ = try library.save(partial)
-        let value=try adapter.values(userId:user).first { $0.recording?.id==partial.id }!
-        precondition(value.recording!.paragraphs[0].startMs==nil && value.recording!.paragraphs[0].endMs==nil,"Local partial bounds must not become exact cloud timestamps")
-        try adapter.apply(LibrarySyncEntity(kind:.recording,id:partial.id,version:1,value:value),userId:user)
+        let library=try MeetingLibrary(root:root)
+        _ = try library.save(partial)
         let saved=try library.load(partial.id)
         precondition(saved.transcriptParagraphs.count==1 && saved.transcriptParagraphs[0].alignedStart==1 && saved.transcriptParagraphs[0].alignedEnd==2)
-        precondition(saved.originalRecognitionCandidates == partial.originalRecognitionCandidates, "Sync cannot discard original machine candidates")
+        precondition(saved.originalRecognitionCandidates == partial.originalRecognitionCandidates)
         let published=try AgentDataPublisher.snapshot(saved,libraryRoot:root)
         precondition(published.paragraphs[0].start==nil && published.paragraphs[0].alignedStart==1 && published.paragraphs[0].text==full)
-        var changed=value; changed.recording!.paragraphs[0].text="人工改写。"
-        try adapter.apply(LibrarySyncEntity(kind:.recording,id:partial.id,version:2,value:changed),userId:user)
-        let changedRecord=try library.load(partial.id)
-        precondition(changedRecord.transcriptParagraphs[0].alignedStart==nil,"Remote text edits invalidate the old partial alignment")
         print("PASS: 50-character fallback, immutable text, pending timing, protected words, hard speaker/gap boundaries, aligned save/SRT/playback")
     }
 }

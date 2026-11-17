@@ -25,7 +25,7 @@ import AVFoundation
         let partial=first.currentSnapshot()!
         precondition(partial.completedFrames==24*16000 && partial.jobs==2 && partial.pendingSeams==1,"Later jobs must proceed without falsely publishing across the seam")
         do { _ = try await first.finish(totalFrames:66*16000);preconditionFailure("The unresolved seam must remain pending") }
-        catch { precondition(error.localizedDescription.hasPrefix("录音已停止并保存。"),"A pending transcript must not be reported as a recording-stop failure") }
+        catch { precondition(error.localizedDescription.hasPrefix("录音已停止并保存") && error.localizedDescription.contains("部分转录尚未完成"),"A pending transcript must not be reported as a recording-stop failure") }
         await first.cancelAndWait()
         let journal=try JSONSerialization.jsonObject(with:Data(contentsOf:progress.appendingPathComponent("progress.json")))as! [String:Any],jobs=journal["jobs"]as! [[String:Any]]
         precondition(jobs.count==3 && jobs[1]["status"]as? String=="seam-pending")

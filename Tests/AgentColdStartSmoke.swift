@@ -94,14 +94,8 @@ private final class StartupOffline: URLProtocol {
 
         let (brokenRoot, brokenID, _) = try seed("broken-sync-state")
         let syncDirectory = brokenRoot.appendingPathComponent("Sync")
-        let brokenLibrary = try MeetingLibrary(root: brokenRoot)
-        let brokenAdapter = MacLibrarySyncAdapter(library: brokenLibrary)
-        let brokenSync = LibrarySyncEngine(root: syncDirectory, adapter: brokenAdapter)
-        try brokenSync.connect(userId: userA, server: server, transport: LibrarySyncHTTP(server: server, token: "synthetic-fixture-token"), polling: false)
-        brokenSync.disconnect()
-        for file in FileManager.default.enumerator(at: syncDirectory, includingPropertiesForKeys: nil)!.allObjects.compactMap({ $0 as? URL }) where file.lastPathComponent == "state.json" {
-            try Data("corrupt-fixture".utf8).write(to: file)
-        }
+        try FileManager.default.createDirectory(at: syncDirectory, withIntermediateDirectories: true)
+        try Data("corrupt-fixture".utf8).write(to: syncDirectory.appendingPathComponent("legacy-state.json"))
         let brokenAccount = store(StartupCredentials(cached(userA))), brokenApp = state(brokenRoot, brokenAccount)
         try await waitFor(brokenRoot, id: brokenID, account: brokenAccount)
         precondition(brokenAccount.isSignedIn, "Sync cache failure must not sign the local account out")

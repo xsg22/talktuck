@@ -148,8 +148,10 @@ final class AppState: ObservableObject {
     let notionAccount: NotionAccountConnection
     let feishuAccount: FeishuAccountConnection
     let cloudAccount: TalkTuckAccountStore
-    @Published private(set) var librarySync: LibrarySyncEngine?
-    @Published private(set) var libraryAudioSync: LibraryAudioSyncEngine?
+    @Published private(set) var lanSyncMessage = "等待 iPhone 发送录音。"
+    lazy var lanSyncChannel = LANSyncChannel(role: .receiver)
+    private var lanSyncRPC: LANSyncRPC?
+    @Published private(set) var lanSyncError: String?
     let dingTalk: MCPConnectionStore
     let feishu: MCPConnectionStore
     let notion: MCPConnectionStore
@@ -352,35 +354,11 @@ final class AppState: ObservableObject {
 
     private func configureLibrarySync() {
         guard let library else { return }
-        let adapter = MacLibrarySyncAdapter(library:library)
-        adapter.beforeRead = { [weak self] in if self?.saveEdits() == false { throw LibrarySyncError.unavailable } }
-        let sync = LibrarySyncEngine(root:storage.appendingPathComponent("Sync"),adapter:adapter)
-        librarySync = sync
-        let audio = LibraryAudioSyncEngine(root:storage.appendingPathComponent("Sync"),adapter:MacLibraryAudioAdapter(library:library))
-        libraryAudioSync = audio
-        sync.onEnabledChange = { [weak audio] enabled in audio?.setAutomaticEnabled(enabled) }
-        sync.onSynchronized = { [weak audio] ids in Task { await audio?.synchronizeAutomatically(recordingIds:ids) } }
-        audio.onInstalled = { [weak self] in self?.reloadSyncProjection();if let self { self.selectPlaybackSegment(max(0,(self.current?.audioFiles.count ?? 1)-1)) } }
-        library.didChange = { [weak sync] in Task { @MainActor in sync?.localDidChange() } }
-        sync.onProjection = { [weak self] in self?.reloadSyncProjection() }
-        cloudAccount.onSessionChange = { [weak self, weak sync] in
+        cloudAccount.onSessionChange = { [weak self] in
             guard let self else { return }
             self.hotwordSync.connect(self.cloudAccount.syncAccess)
-            guard let sync else { return }
             library.updatingAccount(self.cloudAccount.userId) {
-                _ = self.saveEdits(); audio.disconnect(); sync.disconnect()
-                if let access = self.cloudAccount.syncAccess {
-                    do {
-                        if let previous = self.cloudAccount.previousServer {
-                            try ServiceNamespaceMigration.run(root:self.storage.appendingPathComponent("Sync"),userId:access.userId,from:previous,to:access.server)
-                        }
-                        try sync.connect(userId:access.userId,server:access.server,transport:LibrarySyncHTTP(server:access.server,token:access.token))
-                        try audio.connect(userId:access.userId,server:access.server,transport:LibraryAudioHTTP(server:access.server,token:access.token))
-                        audio.setAutomaticEnabled(sync.enabled)
-                        try self.cloudAccount.completeServerMigration()
-                    }
-                    catch { audio.disconnect(); sync.disconnect(); self.error = "本机同步状态无法读取，已暂停同步。" }
-                }
+                _ = self.saveEdits()
             }
             self.reloadSyncProjection()
         }
@@ -394,6 +372,48 @@ final class AppState: ObservableObject {
             if let selection, !history.contains(where: { $0.id == selection }) { self.selection = nil; text = ""; title = ""; stopPlayback() }
             else if editorWasClean, let current { title = current.title;text = current.text }
         } catch { self.error = "读取录音资料库失败：\(error.localizedDescription)" }
+    }
+
+    func startPairedLANSyncIfNeeded() { if !lanSyncChannel.trustedDevices.isEmpty { startLANSync() } }
+
+    func startLANSync() {
+        do {
+            if lanSyncRPC == nil {
+                lanSyncRPC = try makeLANSyncReceiver(channel: lanSyncChannel)
+                lanSyncChannel.onDisconnected = { [weak self] in self?.lanSyncRPC?.cancel() }
+            }
+            lanSyncError = nil; lanSyncChannel.start()
+        } catch { lanSyncError = "无法准备本机接收目录，请检查存储空间。" }
+    }
+
+    func makeLANSyncReceiver(channel: LANSyncChannel) throws -> LANSyncRPC {
+        guard let library else { throw MacLANSyncImporter.Failure.unavailable }
+        lanSyncMessage = "等待 iPhone 发送录音。"
+        let root = storage.appendingPathComponent("LANIncoming", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let importer = MacLANSyncImporter(library: library)
+        return LANSyncRPC(channel: channel, stagingRoot: root, canReuse: { record in
+            let started = ContinuousClock.now
+            let reusable = try await importer.canReuseAudio(record)
+            let elapsed = started.duration(to: .now).components
+            FeedbackDiagnostics.shared.record("lan-sync", reusable ? "audio-reuse-verified" : "audio-required", fields: ["schema": 1, "durationMs": max(0, elapsed.seconds * 1000 + elapsed.attoseconds / 1_000_000_000_000_000)])
+            return reusable
+        }) { [weak self] record, files in
+            guard let self, self.saveEdits() else { throw MacLANSyncImporter.Failure.unavailable }
+            FeedbackDiagnostics.shared.record("lan-sync", "receive-started", fields: ["schema": 1, "reused": files.isEmpty])
+            self.lanSyncMessage = "正在保存接收的录音。"
+            do {
+                try await importer.install(record, files: files)
+                self.reloadSyncProjection()
+                self.lanSyncMessage = "录音已保存到本机。"
+                FeedbackDiagnostics.shared.record("lan-sync", "receive-completed")
+            } catch {
+                if let failure = error as? MacLANSyncImporter.Failure, case .conflict = failure { self.lanSyncMessage = "录音与本机已有资料冲突，已保留本机内容。" }
+                else { self.lanSyncMessage = "录音未能保存，请检查存储空间后重试。" }
+                FeedbackDiagnostics.shared.record("lan-sync", "receive-failed")
+                throw error
+            }
+        }
     }
 
     private func publishRecordingStatus() {

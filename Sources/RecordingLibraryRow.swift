@@ -28,6 +28,9 @@ struct RecordingLibraryRow: View {
                             .help(groupName)
                     }
                 }.font(.system(size: 11)).foregroundStyle(TalkTuckTheme.muted)
+                if let label = record.lanTranscriptionLabel {
+                    Text(L10n.format("上次同步：{0}", L10n.text(label))).font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
             Spacer(minLength: 0)
         }.frame(minHeight: 46, alignment: .top).padding(12).frame(maxWidth: .infinity, alignment: .leading)

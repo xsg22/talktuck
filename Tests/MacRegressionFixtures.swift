@@ -24,31 +24,3 @@ import AVFoundation
         print("PASS: isolated CLI fixture prepared")
     }
 }
-
-/// A second client creates the concurrent edit expected by LibrarySyncSmoke.
-/// The caller must supply the isolated loopback fixture used for the seed phase.
-struct LibrarySyncRemoteEditSmoke {
-    @MainActor static func main() async throws {
-        let server = URL(string: CommandLine.arguments[1])!
-        precondition(server.host == "127.0.0.1")
-        var request = URLRequest(url: server.appendingPathComponent("v1/auth/account"))
-        request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["username": "qa_sync_bridge", "password": "synthetic-password"])
-        let (data, response) = try await URLSession.shared.data(for: request)
-        precondition((response as? HTTPURLResponse)?.statusCode == 200)
-        let token = (try JSONSerialization.jsonObject(with: data) as! [String: Any])["token"] as! String
-        let client = LibrarySyncHTTP(server: server, token: token)
-        let page = try await client.changes(cursor: nil)
-        let entry = page.events.last { $0.id == LibrarySyncSmoke.recordingID }!
-        var record = entry.value!.recording!
-        record.title = "iPhone 修改标题"
-        record.paragraphs[0].text = "iPhone 修改的正式文字"
-        let changed = try await client.mutate(deviceId: UUID(), mutation: LibrarySyncMutation(kind: .recording, id: record.id, baseVersion: entry.version, value: .recording(record)))
-        precondition(changed.status == "applied")
-        let groupEntry = page.events.last { $0.id == record.groupId && $0.kind == .group }!
-        var group = groupEntry.value!.group!; group.name = "项目·手机"
-        let renamed = try await client.mutate(deviceId: UUID(), mutation: LibrarySyncMutation(kind: .group, id: group.id, baseVersion: groupEntry.version, value: .group(group)))
-        precondition(renamed.status == "applied")
-        print("PASS: second loopback client changed text and group while Mac edits remained offline")
-    }
-}
