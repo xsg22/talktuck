@@ -1276,5 +1276,10 @@
   "连接中断": "Connection lost",
   "摘要": "Summary",
   "管理 TalkTuck 账号与个人热词。": "Manage your TalkTuck account and personal vocabulary.",
-  "录音保存在本机；可在 iPhone 同步中接收录音。": "Recordings stay on this Mac. Use iPhone sync to receive recordings."
+  "录音保存在本机；可在 iPhone 同步中接收录音。": "Recordings stay on this Mac. Use iPhone sync to receive recordings.",
+  "已配对设备": "Paired devices",
+  "解除配对": "Unpair",
+  "无法更新已配对设备": "Could not update paired devices",
+  "无法保存配对，请检查设备设置": "Could not save pairing. Check your device settings.",
+  "配对信息不一致，请在两端解除配对后重试。": "Pairing does not match. Unpair on both devices and try again."
 }

@@ -21,6 +21,7 @@ private let feedbackDiagnosticLog = Logger(subsystem: Bundle.main.bundleIdentifi
     func applicationDidFinishLaunching(_ notification: Notification) {
         FeedbackDiagnostics.shared.record("app", "launch")
         attach(ApplicationServices.state)
+        ApplicationServices.state.startPairedLANSyncIfNeeded()
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let state else { return true }

@@ -127,6 +127,9 @@ final class AppState: ObservableObject {
     let feishuAccount: FeishuAccountConnection
     let cloudAccount: TalkTuckAccountStore
     @Published private(set) var lanSyncMessage = "等待 iPhone 发送录音。"
+    lazy var lanSyncChannel = LANSyncChannel(role: .receiver)
+    private var lanSyncRPC: LANSyncRPC?
+    @Published private(set) var lanSyncError: String?
     let dingTalk: MCPConnectionStore
     let feishu: MCPConnectionStore
     let notion: MCPConnectionStore
@@ -334,6 +337,18 @@ final class AppState: ObservableObject {
             if let selection, !history.contains(where: { $0.id == selection }) { self.selection = nil; text = ""; title = ""; stopPlayback() }
             else if editorWasClean, let current { title = current.title;text = current.text }
         } catch { self.error = "读取录音资料库失败：\(error.localizedDescription)" }
+    }
+
+    func startPairedLANSyncIfNeeded() { if !lanSyncChannel.trustedDevices.isEmpty { startLANSync() } }
+
+    func startLANSync() {
+        do {
+            if lanSyncRPC == nil {
+                lanSyncRPC = try makeLANSyncReceiver(channel: lanSyncChannel)
+                lanSyncChannel.onDisconnected = { [weak self] in self?.lanSyncRPC?.cancel() }
+            }
+            lanSyncError = nil; lanSyncChannel.start()
+        } catch { lanSyncError = "无法准备本机接收目录，请检查存储空间。" }
     }
 
     func makeLANSyncReceiver(channel: LANSyncChannel) throws -> LANSyncRPC {
