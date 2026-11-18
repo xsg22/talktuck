@@ -16,7 +16,8 @@ for name in ['mlx','mlx-metal','mlx-audio','transformers','huggingface-hub','num
  datas+=copy_metadata(name)
 a=Analysis([str(root/'Native/QwenRuntime/worker.py')],pathex=[],binaries=mlx_binaries,datas=datas,
  hiddenimports=hidden,hookspath=[],hooksconfig={},runtime_hooks=[],
- excludes=['torch','torchvision','torchaudio','tensorflow','jax','matplotlib','pandas','IPython','pytest','mlx_audio.tts','mlx_audio.sts'],noarchive=False)
+ excludes=['torch','torchvision','torchaudio','tensorflow','jax','matplotlib','pandas','IPython','pytest','mlx_audio.tts','mlx_audio.sts',
+           'scipy.linalg.cython_blas','scipy.linalg.cython_lapack','scipy.sparse.linalg._dsolve._superlu'],noarchive=False)
 pyz=PYZ(a.pure)
 exe=EXE(pyz,a.scripts,[],exclude_binaries=True,name='qwen-asr',debug=False,bootloader_ignore_signals=False,
  strip=False,upx=False,console=True,target_arch='arm64',codesign_identity=None,entitlements_file=None)
