@@ -56,7 +56,24 @@ struct TranscriptionOutput: Codable, Sendable {
         fallbackCount = try values.decodeIfPresent(Int.self, forKey: .fallbackCount) ?? 0
     }
     func readingFallback(hotwords: [String] = []) -> TranscriptionOutput {
-        TranscriptionOutput(text: text, subtitles: subtitles, paragraphs: TranscriptReadability.fallback(text, hotwords: hotwords), originalCandidates: originalCandidates, fallbackCount: fallbackCount)
+        // Recognition windows are coarse but real audio ranges. Keep them if
+        // they cover the exact saved text; inventing sentence timestamps would
+        // be misleading, and discarding these windows makes playback impossible
+        // if the later speaker/alignment pass fails.
+        let combined = paragraphs.map { $0.separator + $0.text }.joined()
+        let saved: [TranscriptParagraph]
+        if !paragraphs.isEmpty && combined == text {
+            saved = paragraphs.map { row in
+                var safe = row
+                if let start = row.start, let end = row.end,
+                   start.isFinite, end.isFinite, start >= 0, end > start { return safe }
+                safe.start = nil; safe.end = nil
+                return safe
+            }
+        } else {
+            saved = TranscriptReadability.fallback(text, hotwords: hotwords)
+        }
+        return TranscriptionOutput(text: text, subtitles: subtitles, paragraphs: saved, originalCandidates: originalCandidates, fallbackCount: fallbackCount)
     }
 }
 

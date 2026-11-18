@@ -280,7 +280,7 @@ final class ProgressiveTranscriptionSession: @unchecked Sendable {
                 else {
                     let recovery=root.appendingPathComponent(job.id.uuidString+"-window-recovery.json")
                     let savedFailure=(try? Data(contentsOf:recovery)).flatMap{try? JSONDecoder().decode([String:Int].self,from:$0)}?["failedWindowSeconds"]
-                    let requested=Self.recoveryWindow(configured:Int(window/16000),failed:savedFailure)
+                    let requested=Self.recoveryWindow(configured:ASRWindowPolicy.alignableRecognitionSeconds(Int(window/16000)),failed:savedFailure)
                     raw=try engine.transcribeBatch(audio:ref,model:model,executable:executable,language:language,hotwords:hotwords,
                         context:context+String(priorText.suffix(1200)),windowSeconds:requested,allowParaformerFallback:true,onRecovery:{seconds in
                             try? BalancedAudioIO.save(["failedWindowSeconds":seconds],to:recovery)

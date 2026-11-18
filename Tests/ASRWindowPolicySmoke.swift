@@ -6,6 +6,7 @@ import Foundation
         precondition(ASRWindowPolicy(offlineSeconds:1200).offlineSeconds == ASRWindowPolicy().offlineSeconds)
         precondition(ASRWindowPolicy(liveTargetSeconds:0).liveTargetSeconds == ASRWindowPolicy().liveTargetSeconds)
         precondition(ASRWindowPolicy.maximumASRSeconds < 1200 && ASRWindowPolicy.maximumAlignmentSeconds == 300)
+        precondition(ASRWindowPolicy.alignableRecognitionSeconds(360) == 240 && ASRWindowPolicy.alignableRecognitionSeconds(480) == 240 && ASRWindowPolicy.alignableRecognitionSeconds(60) == 60)
         let memory:UInt64=16*1024*1024*1024
         precondition(ASRWindowPolicy.recommendedOfflineSeconds(language:"zh",memoryBytes:memory)==480)
         precondition(ASRWindowPolicy.recommendedOfflineSeconds(language:"en",memoryBytes:memory)==360)

@@ -5,6 +5,12 @@ import Foundation
 struct ASRWindowPolicy: Equatable, Sendable {
     static let maximumASRSeconds = 480
     static let maximumAlignmentSeconds = 300
+    // Keep recognition windows within the aligner's supported range. The
+    // extra headroom allows for overlap and rounding at window boundaries.
+    static let maximumAlignableRecognitionSeconds = 240
+    static func alignableRecognitionSeconds(_ requested: Int) -> Int {
+        min(requested, maximumAlignableRecognitionSeconds)
+    }
     static let offlineChoices = [24,45,60,120,240,360,480]
     static let liveChoices = [6,8,12,16,24,30]
     let offlineSeconds: Int
