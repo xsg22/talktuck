@@ -12,7 +12,7 @@ verify_sha256() {
 download() {
     local url="$1" file_path="$2"
     curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
-        --retry-delay 2 --connect-timeout 20 "$url" -o "$file_path.partial"
+        --retry-delay 2 --connect-timeout 20 --max-time 180 "$url" -o "$file_path.partial"
     mv "$file_path.partial" "$file_path"
 }
 

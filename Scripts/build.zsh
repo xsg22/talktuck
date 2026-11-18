@@ -18,9 +18,16 @@ cp .vendor/dws/dws "$app/Contents/Resources/Accounts/dws"
 cp .vendor/lark-cli/lark-cli "$app/Contents/Resources/Integrations/lark-cli"
 cp Resources/DWS-LICENSE.txt "$app/Contents/Resources/Licenses/dws.txt"
 cp .vendor/lark-cli/LICENSE "$app/Contents/Resources/Licenses/lark-cli.txt"
-xcrun swiftc -O -swift-version 5 -parse-as-library -target arm64-apple-macosx14.0 \
+compile_swift() {
+    if [[ "${TALKTUCK_SWIFT_SYSTEM_TMP:-0}" == 1 ]]; then
+        env -u TMPDIR xcrun swiftc "$@"
+    else
+        xcrun swiftc "$@"
+    fi
+}
+compile_swift -O -swift-version 5 -parse-as-library -target arm64-apple-macosx14.0 \
     -o "$app/Contents/MacOS/TalkTuckApp" Sources/*.swift
-xcrun swiftc -O -swift-version 5 -target arm64-apple-macosx14.0 \
+compile_swift -O -swift-version 5 -target arm64-apple-macosx14.0 \
     Sources/AgentSchema.swift Sources/TalkTuckControl.swift Sources/AgentSetup.swift Native/AgentCLI/main.swift -o "$app/Contents/MacOS/talktuck"
 ditto Resources/AgentSkill "$app/Contents/Resources/AgentSkill"
 ditto Resources/Localization "$app/Contents/Resources/Localization"
@@ -50,6 +57,10 @@ otool -L "$app/Contents/Resources/Accounts/dws" | tail -n +2 >> .build/engine-li
 otool -L "$app/Contents/Resources/Integrations/lark-cli" | tail -n +2 >> .build/engine-linkage.txt
 if rg '/opt/homebrew|/Users/' .build/engine-linkage.txt; then
     print -u2 '推理引擎依赖本机第三方动态库，不能独立分发'; exit 1
+fi
+if [[ "${TALKTUCK_APP_ONLY:-0}" == 1 ]]; then
+    print "App 构建完成：$app"
+    exit 0
 fi
 # 全部构建和签名成功后才替换交付目录，失败不覆盖可用旧版。
 if [[ "${TALKTUCK_STAGE_ONLY:-0}" != "1" ]]; then
