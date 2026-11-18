@@ -15,7 +15,7 @@ python3 Scripts/mac-appstore-package.py \
   --installer-identity '3rd Party Mac Developer Installer: TEAM NAME (TEAMID)'
 ```
 
-版本和构建号须自行确认 App Store Connect 尚未使用；输出目录必须是外接盘 `Codex` 下尚不存在的目录，不覆盖旧包。源码采用当前 Git 提交的快照，已跟踪文件有未提交改动时停止；未跟踪文件不会打进构建。依赖缓存在外接盘的 `Codex/talktuck/mas-dependency-cache/`，可用 `--cache-root` 指定专用外接盘目录。脚本对缓存加锁，同一缓存的并发打包会安全退出。Qwen 运行时按输入摘要复用；依赖有变化时重新构建。Swift 编译子进程因本机外接盘临时目录不兼容使用系统临时目录，其余可指定的构建和缓存仍使用外接盘。
+版本和构建号须自行确认 App Store Connect 尚未使用；输出目录必须是外接盘 `Codex` 下尚不存在的目录，不覆盖旧包。源码采用当前 Git 提交的快照，已跟踪文件有未提交改动时停止；未跟踪文件不会打进构建。如需在工作区存在其他任务的未提交改动时明确只构建 HEAD，可加 `--use-committed-head`；这些改动不会进入包，清单与摘要会记录排除情况。依赖缓存在外接盘的 `Codex/talktuck/mas-dependency-cache/`，可用 `--cache-root` 指定专用外接盘目录。脚本对缓存加锁，同一缓存的并发打包会安全退出。Qwen 运行时按输入摘要复用；依赖有变化时重新构建。Swift 编译子进程因本机外接盘临时目录不兼容使用系统临时目录，其余可指定的构建和缓存仍使用外接盘。
 
 控制台只显示摘要；完整日志、来源和 SHA-256 在任务目录的 `evidence/`，安装包及校验文件在 `deliverables/`。成功后自动清理本次 `build/`、`tmp/` 并记录路径；`--keep-build` 可保留中间文件用于排查。失败时保留现场供检查。日志、交付包及依赖缓存保留；其他历史包按项目约定单独核对。
 

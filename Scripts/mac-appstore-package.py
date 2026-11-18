@@ -22,6 +22,7 @@ def main():
     p.add_argument('--cache-root', type=pathlib.Path, help='dedicated external persistent dependency cache')
     p.add_argument('--from-app', type=pathlib.Path, help='package an existing candidate; provenance is unverified')
     p.add_argument('--keep-build', action='store_true', help='retain this run’s intermediate build and temporary files')
+    p.add_argument('--use-committed-head', action='store_true', help='explicitly exclude tracked uncommitted changes')
     a = p.parse_args()
     if not re.fullmatch(r'\d+(?:\.\d+){0,2}', a.version) or not re.fullmatch(r'\d+(?:\.\d+){0,2}', a.build):
         p.error('version and build must contain only numeric dot-separated components')
@@ -68,7 +69,8 @@ def main():
                 provenance = {'type':'existing-app', 'source':str(source), 'source_commit':None, 'verified_against_source':False}
             else:
                 status = subprocess.check_output(['git','status','--porcelain','--untracked-files=no'], cwd=ROOT, text=True)
-                if status: raise ValueError('Tracked source changes exist; commit or use a clean checkout')
+                if status and not a.use_committed_head:
+                    raise ValueError('Tracked source changes exist; commit, use a clean checkout, or explicitly pass --use-committed-head')
                 commit = subprocess.check_output(['git','rev-parse','HEAD'], cwd=ROOT, text=True).strip()
                 cache.mkdir(parents=True, exist_ok=True)
                 source_root = root/'build/source'; source_root.mkdir()
@@ -93,7 +95,8 @@ def main():
                 cmd(['/bin/zsh','Scripts/prepare-account-components.zsh'],cwd=source_root)
                 cmd(['/bin/zsh','Scripts/build.zsh'],cwd=source_root)
                 source = source_root/'.build/release/TalkTuck.app'
-                provenance = {'type':'git-archive','source_commit':commit,'verified_against_source':True}
+                provenance = {'type':'git-archive','source_commit':commit,'verified_against_source':True,
+                              'excluded_uncommitted_changes':bool(status)}
             app = root/'build/TalkTuck.app'; cmd(['ditto',source,app])
             info = app/'Contents/Info.plist'
             with info.open('rb') as f: values=plistlib.load(f)
@@ -164,6 +167,7 @@ def main():
             print(f'PASS: {a.version} ({a.build})\nPKG: {pkg}\nSHA256: {sha}\n日志: {logpath}\n未上传；未完成产品功能验收。')
             print('提示：未嵌入描述文件，TestFlight 不可用（90889）。')
             if a.from_app: print('提示：输入为已有 App，未验证与源码提交的对应关系。')
+            elif provenance['excluded_uncommitted_changes']: print('提示：已排除未提交的已跟踪文件改动。')
         except (subprocess.CalledProcessError, OSError, ValueError) as exc:
             print(f'FAIL: {exc}\n详细日志: {logpath}', file=sys.stderr)
             raise SystemExit(1)
